@@ -24,6 +24,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleDashboard)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/positions", s.handlePositions)
+	mux.HandleFunc("/balance", s.handleBalance)
 	mux.HandleFunc("/pause", s.handlePause)
 	mux.HandleFunc("/resume", s.handleResume)
 	mux.HandleFunc("/kill", s.handleKill)
@@ -41,14 +42,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	dailyPnL, trades, wins := s.engine.GetDailyStats()
+	holdings := s.engine.GetHoldings()
 	resp := map[string]any{
 		"running":    s.engine.IsRunning(),
 		"breached":   s.engine.IsBreached(),
 		"equity":     s.engine.GetEquity(),
+		"cash":       s.engine.GetCash(),
 		"daily_pnl":  dailyPnL,
 		"trades":     trades,
 		"wins":       wins,
 		"positions":  s.engine.GetPositions(),
+		"holdings":   holdings,
 		"signals":    len(s.engine.GetActiveSignals()),
 		"strategies": s.engine.GetStrategyNames(),
 	}
@@ -57,6 +61,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.engine.GetPositions())
+}
+
+func (s *Server) handleBalance(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.engine.GetHoldings())
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {

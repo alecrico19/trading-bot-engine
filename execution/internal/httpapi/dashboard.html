@@ -96,6 +96,7 @@
   <div class="card">
     <h2>Equity & P&L</h2>
     <div class="big-number" id="equity">$—</div>
+    <div class="stat"><span class="label">Cash Available</span><span class="value" id="cash">$—</span></div>
     <div class="stat"><span class="label">Daily P&L</span><span class="value" id="daily-pnl">$—</span></div>
     <div class="stat"><span class="label">Trades</span><span class="value" id="trades">—</span></div>
     <div class="stat"><span class="label">Win Rate</span><span class="value" id="winrate">—</span></div>
@@ -153,8 +154,8 @@ function updateUI(d) {
   }
 
   // Equity
-  document.getElementById('equity').textContent = '$' + (d.equity || 0).toLocaleString();
-  const equityEl = document.getElementById('equity');
+  document.getElementById('equity').textContent = '$' + (d.equity || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  document.getElementById('cash').textContent = '$' + ((d.cash || 0)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
   // Daily P&L
   const pnl = d.daily_pnl || 0;
@@ -180,28 +181,26 @@ function updateUI(d) {
   // Signals
   document.getElementById('signals').textContent = d.signals || 0;
 
-  // Positions
-  fetch(API + '/positions').then(r => r.json()).then(positions => {
-    const list = document.getElementById('positions-list');
-    document.getElementById('pos-count').textContent = positions.length;
-    if (!positions.length) {
-      list.innerHTML = '<span style="color:#565f89;">No open positions</span>';
-      return;
-    }
-    let html = '<div class="position-row" style="color:#565f89;font-size:11px;"><span>PAIR</span><span>SIDE</span><span>SIZE</span><span>PNL</span></div>';
-    positions.forEach(p => {
-      const sideBadge = p.side === 'long' ? 'badge-long' : 'badge-short';
-      const pnlClass = (p.unrealized_pnl || 0) >= 0 ? 'green' : 'red';
-      const pnlSign = (p.unrealized_pnl || 0) >= 0 ? '+' : '';
+  // Positions from holdings (balances)
+  const holdings = d.holdings || [];
+  const nonCash = holdings.filter(h => h.asset !== 'USDT' && h.asset !== 'USD' && h.asset !== 'USDC' && (h.free + h.locked) > 0);
+  const list = document.getElementById('positions-list');
+  document.getElementById('pos-count').textContent = nonCash.length;
+  if (!nonCash.length) {
+    list.innerHTML = '<span style="color:#565f89;">No open positions</span>';
+  } else {
+    let html = '<div class="position-row" style="color:#565f89;font-size:11px;"><span>ASSET</span><span>QTY</span><span>FREE</span><span>LOCKED</span></div>';
+    nonCash.forEach(h => {
+      const total = h.free + h.locked;
       html += `<div class="position-row">
-        <span>${p.symbol}</span>
-        <span><span class="badge ${sideBadge}">${p.side.toUpperCase()}</span></span>
-        <span>${(p.amount || 0).toFixed(4)}</span>
-        <span class="${pnlClass}">${pnlSign}$${(p.unrealized_pnl || 0).toFixed(2)}</span>
+        <span style="color:#ffd700;">${h.asset}</span>
+        <span>${total.toFixed(6)}</span>
+        <span class="green">${h.free.toFixed(4)}</span>
+        <span style="color:#e0af68;">${h.locked > 0 ? h.locked.toFixed(4) : '—'}</span>
       </div>`;
     });
     list.innerHTML = html;
-  }).catch(() => {});
+  }
 
   // Strategies
   const strats = d.strategies || [];

@@ -428,6 +428,48 @@ func calculateEquity(balances []types.Balance) float64 {
 	return total
 }
 
+func (e *Engine) GetHoldings() []types.Balance {
+	balances, err := e.exchange.FetchBalance(context.Background())
+	if err != nil {
+		return nil
+	}
+	return balances
+}
+
+func (e *Engine) GetEquity() float64 {
+	balances, err := e.exchange.FetchBalance(context.Background())
+	if err != nil {
+		return 0
+	}
+	total := 0.0
+	for _, b := range balances {
+		if b.Asset == "USDT" || b.Asset == "USD" || b.Asset == "USDC" {
+			total += b.Free + b.Locked
+			continue
+		}
+		amount := b.Free + b.Locked
+		if amount <= 0 {
+			continue
+		}
+		symbol := b.Asset + "USDT"
+		ticker, err := e.marketData.FetchTicker(context.Background(), symbol)
+		if err == nil && ticker != nil && ticker.Last > 0 {
+			total += amount * ticker.Last
+		} else {
+			total += amount * 0
+		}
+	}
+	return total
+}
+
+func (e *Engine) GetCash() float64 {
+	balances, err := e.exchange.FetchBalance(context.Background())
+	if err != nil {
+		return 0
+	}
+	return calculateEquity(balances)
+}
+
 func (e *Engine) IsRunning() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -444,14 +486,6 @@ func (e *Engine) GetPositions() []types.Position {
 
 func (e *Engine) GetActiveSignals() []*types.Signal {
 	return e.signalCon.GetAllActive()
-}
-
-func (e *Engine) GetEquity() float64 {
-	balances, err := e.exchange.FetchBalance(context.Background())
-	if err != nil {
-		return 0
-	}
-	return calculateEquity(balances)
 }
 
 func (e *Engine) GetDailyStats() (float64, int, int) {
