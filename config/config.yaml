@@ -1,0 +1,44 @@
+exchanges:
+  binance:
+    api_key: "${BINANCE_API_KEY}"
+    api_secret: "${BINANCE_API_SECRET}"
+    testnet: true
+
+risk:
+  max_position_pct: 0.10
+  max_daily_loss_pct: 0.05
+  max_concurrent_positions: 3
+  circuit_breaker_drawdown_pct: 0.15
+  max_order_size_usd: 200
+  min_order_size_usd: 10
+  max_price_deviation_pct: 0.02
+
+live_trading: false
+
+alerts:
+  telegram_token: ""
+  telegram_chat_id: ""
+  discord_webhook: ""
+
+strategies:
+  scalping:
+    enabled: true
+    symbols: ["BTCUSDT", "ETHUSDT"]
+    order_book_depth: 20
+    min_spread_pct: 0.05
+    position_size_usd: 100
+
+  mean-reversion:
+    enabled: true
+    symbols: ["BTCUSDT", "ETHUSDT"]
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    bb_period: 20
+    bb_stddev: 2.0
+    position_size_usd: 100
+
+research:
+  update_interval_seconds: 60
+  sentiment_sources: ["rss", "newsapi"]
+  signal_min_confidence: 0.6

@@ -1,0 +1,51 @@
+symbols: ["BTC/USDT", "ETH/USDT"]
+
+redis:
+  host: "localhost"
+  port: 6379
+
+update_interval: 60
+signal_min_confidence: 0.6
+
+rsi_period: 14
+rsi_oversold: 30
+rsi_overbought: 70
+bb_period: 20
+bb_stddev: 2.0
+volume_spike_multiplier: 1.5
+
+feed_urls:
+  - "https://cointelegraph.com/rss"
+  - "https://www.coindesk.com/arc/outboundfeeds/rss/"
+  - "https://cryptoslate.com/feed/"
+
+signal_rules:
+  - name: "oversold_bounce"
+    conditions:
+      - rsi_14: 30
+      - volume_ratio: 1.5
+    action: "bias_long"
+    confidence: 0.70
+    ttl_seconds: 300
+
+  - name: "overbought_reversal"
+    conditions:
+      - rsi_above: 70
+      - volume_ratio: 1.5
+    action: "bias_short"
+    confidence: 0.70
+    ttl_seconds: 300
+
+  - name: "strong_positive_sentiment"
+    conditions:
+      - sentiment_above: 0.5
+    action: "bias_long"
+    confidence: 0.65
+    ttl_seconds: 600
+
+  - name: "strong_negative_sentiment"
+    conditions:
+      - sentiment_below: -0.5
+    action: "bias_short"
+    confidence: 0.65
+    ttl_seconds: 600

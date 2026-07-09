@@ -1,0 +1,592 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/rs/zerolog"
+
+	"trading-bot/execution/internal/alert"
+	"trading-bot/execution/internal/config"
+	"trading-bot/execution/internal/db"
+	"trading-bot/execution/internal/exchange"
+	"trading-bot/execution/internal/order"
+	"trading-bot/execution/internal/risk"
+	"trading-bot/execution/internal/signal"
+	"trading-bot/execution/internal/types"
+)
+
+type Engine struct {
+	cfg        *config.Config
+	exchange   exchange.Exchange
+	marketData exchange.Exchange
+	orderMgr   *order.Manager
+	riskMgr    *risk.Manager
+	signalCon  *signal.Consumer
+	db         *db.Store
+	alerts     *alert.Service
+	logger     zerolog.Logger
+
+	signals     []types.Signal
+	strategies  []Strategy
+	stratPaused map[string]bool
+	tradeCount  int
+
+	mu     sync.RWMutex
+	running bool
+}
+
+func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange, om *order.Manager, rm *risk.Manager, sc *signal.Consumer, store *db.Store, alerts *alert.Service, logger zerolog.Logger) *Engine {
+	if marketData == nil {
+		marketData = ex
+	}
+	return &Engine{
+		cfg:         cfg,
+		exchange:    ex,
+		marketData:  marketData,
+		orderMgr:    om,
+		riskMgr:     rm,
+		signalCon:   sc,
+		db:          store,
+		alerts:      alerts,
+		logger:      logger.With().Str("component", "engine").Logger(),
+		stratPaused: make(map[string]bool),
+	}
+}
+
+func (e *Engine) RegisterStrategy(s Strategy) {
+	e.strategies = append(e.strategies, s)
+	e.stratPaused[s.Name()] = false
+	e.logger.Info().Str("strategy", s.Name()).Msg("strategy registered")
+}
+
+func (e *Engine) Run(ctx context.Context) error {
+	e.mu.Lock()
+	e.running = true
+	e.mu.Unlock()
+
+	defer func() {
+		e.mu.Lock()
+		e.running = false
+		e.mu.Unlock()
+	}()
+
+	balances, err := e.exchange.FetchBalance(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch initial balance: %w", err)
+	}
+	equity := calculateEquity(balances)
+	e.riskMgr.SetStartEquity(equity)
+
+	e.reconcilePositions(ctx)
+
+	e.logger.Info().Float64("equity", equity).Int("strategies", len(e.strategies)).Msg("engine starting")
+	e.alerts.Send(alert.LevelInfo, "Engine Started",
+		fmt.Sprintf("Equity: $%.2f | Strategies: %d | Symbols: %v", equity, len(e.strategies), e.collectSymbols()))
+
+	signalCh, err := e.signalCon.Subscribe(ctx)
+	if err != nil {
+		e.logger.Warn().Err(err).Msg("signal subscription failed, continuing without signals")
+	}
+
+	symbols := e.collectSymbols()
+	if len(symbols) == 0 {
+		return fmt.Errorf("no symbols configured for strategies")
+	}
+
+	var wg sync.WaitGroup
+	decisionCh := make(chan *types.Decision, 10)
+	tickerCh := make(chan struct{}, 1)
+	tickerCh <- struct{}{}
+
+	for _, symbol := range symbols {
+		wg.Add(1)
+		go e.runOrderBookLoop(ctx, &wg, symbol, decisionCh, tickerCh)
+	}
+
+	wg.Add(1)
+	go e.runTradeLoop(ctx, &wg, symbols, tickerCh)
+
+	wg.Add(1)
+	go e.runSignalLoop(ctx, &wg, signalCh, tickerCh)
+
+	wg.Add(1)
+	go e.runDecisionLoop(ctx, &wg, decisionCh)
+
+	wg.Add(1)
+	go e.runPnLSnapshot(ctx, &wg)
+
+	wg.Add(1)
+	go e.runAlertMonitor(ctx, &wg)
+
+	<-ctx.Done()
+	e.logger.Info().Msg("engine shutting down")
+	e.saveDailySnapshot()
+	e.alerts.Send(alert.LevelInfo, "Engine Stopped", "Shutdown complete")
+	wg.Wait()
+
+	return nil
+}
+
+func (e *Engine) collectSymbols() []string {
+	seen := make(map[string]bool)
+	for _, s := range e.strategies {
+		switch s.Name() {
+		case "scalping":
+			for _, sym := range e.cfg.Strategies["scalping"].Symbols {
+				seen[sym] = true
+			}
+		case "mean-reversion":
+			for _, sym := range e.cfg.Strategies["mean-reversion"].Symbols {
+				seen[sym] = true
+			}
+		}
+	}
+	symbols := make([]string, 0, len(seen))
+	for s := range seen {
+		symbols = append(symbols, s)
+	}
+	return symbols
+}
+
+func (e *Engine) runOrderBookLoop(ctx context.Context, wg *sync.WaitGroup, symbol string, decisionCh chan<- *types.Decision, tickerCh chan<- struct{}) {
+	defer wg.Done()
+
+	obCh, err := e.marketData.SubscribeOrderBook(ctx, symbol)
+	if err != nil {
+		e.logger.Error().Err(err).Str("symbol", symbol).Msg("failed to subscribe order book, using polling")
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ob, ok := <-obCh:
+			if !ok {
+				return
+			}
+			e.forwardOrderBook(ob)
+
+			state := e.buildMarketState(symbol)
+			state.OrderBook = ob
+
+			for _, strat := range e.strategies {
+				if !e.isStrategyForSymbol(strat.Name(), symbol) {
+					continue
+				}
+				e.mu.RLock()
+				paused := e.stratPaused[strat.Name()]
+				e.mu.RUnlock()
+				if paused {
+					continue
+				}
+				decision := strat.Evaluate(state)
+				if decision != nil {
+					select {
+					case decisionCh <- decision:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+func (e *Engine) runTradeLoop(ctx context.Context, wg *sync.WaitGroup, symbols []string, tickerCh chan<- struct{}) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	meanRevTicker := time.NewTicker(15 * time.Second)
+	defer meanRevTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-meanRevTicker.C:
+			for _, symbol := range symbols {
+				e.evaluateMeanReversion(ctx, symbol)
+			}
+		case <-ticker.C:
+			select {
+			case tickerCh <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (e *Engine) evaluateMeanReversion(ctx context.Context, symbol string) {
+	ticker, err := e.marketData.FetchTicker(ctx, symbol)
+	if err != nil {
+		e.logger.Error().Err(err).Str("symbol", symbol).Msg("fetch ticker failed")
+		return
+	}
+
+	state := e.buildMarketState(symbol)
+	state.Ticker = ticker
+
+	for _, strat := range e.strategies {
+		if strat.Name() != "mean-reversion" || !e.isStrategyForSymbol("mean-reversion", symbol) {
+			continue
+		}
+		e.mu.RLock()
+		paused := e.stratPaused[strat.Name()]
+		e.mu.RUnlock()
+		if paused {
+			continue
+		}
+		decision := strat.Evaluate(state)
+		if decision != nil {
+			e.executeDecision(ctx, decision)
+		}
+	}
+}
+
+func (e *Engine) runSignalLoop(ctx context.Context, wg *sync.WaitGroup, signalCh <-chan *types.Signal, tickerCh chan<- struct{}) {
+	defer wg.Done()
+
+	if signalCh == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig, ok := <-signalCh:
+			if !ok {
+				return
+			}
+			e.mu.Lock()
+			e.signals = append(e.signals, *sig)
+			if len(e.signals) > 50 {
+				valid := e.signals[:0]
+				for _, s := range e.signals {
+					if !s.IsExpired() {
+						valid = append(valid, s)
+					}
+				}
+				e.signals = valid
+			}
+			e.mu.Unlock()
+
+			e.db.RecordSignal(sig, "logged")
+		}
+	}
+}
+
+func (e *Engine) runDecisionLoop(ctx context.Context, wg *sync.WaitGroup, decisionCh <-chan *types.Decision) {
+	defer wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case decision, ok := <-decisionCh:
+			if !ok {
+				return
+			}
+			e.executeDecision(ctx, decision)
+		}
+	}
+}
+
+func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) {
+	if e.riskMgr.IsBreached() {
+		e.logger.Debug().Str("strategy", decision.Strategy).Msg("decision blocked: circuit breaker")
+		return
+	}
+
+	balances, _ := e.exchange.FetchBalance(ctx)
+	equity := calculateEquity(balances)
+
+	switch decision.Action {
+	case types.ActionBuy, types.ActionSell:
+		if err := e.riskMgr.CanOpenPosition(decision.Symbol, equity, 0); err != nil {
+			e.logger.Debug().Err(err).Str("strategy", decision.Strategy).Msg("position blocked by risk")
+			return
+		}
+
+		amount := decision.Amount
+		if amount == 0 {
+			positionSize := equity * e.cfg.Risk.MaxPositionPct
+			if decision.Price > 0 {
+				amount = positionSize / decision.Price
+			}
+		}
+		if amount <= 0 {
+			return
+		}
+
+		ticker, _ := e.marketData.FetchTicker(ctx, decision.Symbol)
+		if err := e.riskMgr.ValidateOrder(decision.Symbol, decision.Side, decision.Type, amount, decision.Price, ticker); err != nil {
+			e.logger.Warn().Err(err).Str("strategy", decision.Strategy).Msg("order validation failed")
+			return
+		}
+
+		order, err := e.orderMgr.PlaceOrder(ctx, decision.Symbol, decision.Side, decision.Type, amount, decision.Price, decision.Strategy)
+		if err != nil {
+			e.logger.Error().Err(err).Str("strategy", decision.Strategy).Msg("order failed")
+			return
+		}
+		if decision.SignalID != "" {
+			order.SignalID = decision.SignalID
+		}
+
+		pnl := (ticker.Last - order.AvgPrice) * order.Filled
+		if order.Side == types.SideSell {
+			pnl = (order.AvgPrice - ticker.Last) * order.Filled
+		}
+		e.db.RecordTrade(order, pnl)
+		e.riskMgr.RecordTrade(pnl)
+		e.tradeCount++
+
+		e.logger.Info().
+			Str("strategy", decision.Strategy).
+			Str("reason", decision.Reason).
+			Str("order_id", order.ID).
+			Float64("pnl", pnl).
+			Msg("executed decision")
+
+	case types.ActionClose:
+		e.orderMgr.CancelAllOpen(ctx, decision.Symbol)
+
+	case types.ActionReduce:
+		e.orderMgr.CancelAllOpen(ctx, decision.Symbol)
+		e.alerts.Send(alert.LevelWarn, "Position Reduced",
+			fmt.Sprintf("%s: %s — cancelling all open orders", decision.Symbol, decision.Reason))
+		e.logger.Warn().Str("reason", decision.Reason).Msg("positions reduced")
+
+	case types.ActionHold:
+	}
+}
+
+func (e *Engine) buildMarketState(symbol string) *types.MarketState {
+	e.mu.RLock()
+	signals := make([]types.Signal, len(e.signals))
+	copy(signals, e.signals)
+	e.mu.RUnlock()
+
+	positions := e.orderMgr.GetPositions()
+
+	return &types.MarketState{
+		Symbol:    symbol,
+		Signals:   signals,
+		Positions: positions,
+	}
+}
+
+func (e *Engine) isStrategyForSymbol(strategyName, symbol string) bool {
+	cfg, ok := e.cfg.Strategies[strategyName]
+	if !ok || !cfg.Enabled {
+		return false
+	}
+	for _, s := range cfg.Symbols {
+		if s == symbol {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) GetSummary() string {
+	balances, _ := e.exchange.FetchBalance(context.Background())
+	equity := calculateEquity(balances)
+	dailyPnL, trades, wins := e.riskMgr.DailyStats()
+	positions := e.orderMgr.GetPositions()
+	activeSignals := e.signalCon.GetAllActive()
+
+	status := "paused"
+	e.mu.RLock()
+	if e.running {
+		status = "running"
+	}
+	if e.riskMgr.IsBreached() {
+		status = "HALTED (circuit breaker)"
+	}
+	e.mu.RUnlock()
+
+	return fmt.Sprintf(
+		"Status: %s\nEquity: $%.2f\nDaily P&L: $%.2f | Trades: %d | Wins: %d\nPositions: %d | Active Signals: %d",
+		status, equity, dailyPnL, trades, wins, len(positions), len(activeSignals),
+	)
+}
+
+func calculateEquity(balances []types.Balance) float64 {
+	total := 0.0
+	for _, b := range balances {
+		if b.Asset == "USDT" || b.Asset == "USD" || b.Asset == "USDC" {
+			total += b.Free + b.Locked
+		}
+	}
+	return total
+}
+
+func (e *Engine) IsRunning() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.running
+}
+
+func (e *Engine) IsBreached() bool {
+	return e.riskMgr.IsBreached()
+}
+
+func (e *Engine) GetPositions() []types.Position {
+	return e.orderMgr.GetPositions()
+}
+
+func (e *Engine) GetActiveSignals() []*types.Signal {
+	return e.signalCon.GetAllActive()
+}
+
+func (e *Engine) GetEquity() float64 {
+	balances, err := e.exchange.FetchBalance(context.Background())
+	if err != nil {
+		return 0
+	}
+	return calculateEquity(balances)
+}
+
+func (e *Engine) GetDailyStats() (float64, int, int) {
+	return e.riskMgr.DailyStats()
+}
+
+func (e *Engine) GetStrategyNames() []string {
+	names := make([]string, len(e.strategies))
+	for i, s := range e.strategies {
+		names[i] = s.Name()
+	}
+	return names
+}
+
+func (e *Engine) PauseAll() {
+	e.mu.Lock()
+	for k := range e.stratPaused {
+		e.stratPaused[k] = true
+	}
+	e.mu.Unlock()
+	e.logger.Info().Msg("all strategies paused")
+}
+
+func (e *Engine) ResumeAll() {
+	e.mu.Lock()
+	for k := range e.stratPaused {
+		e.stratPaused[k] = false
+	}
+	e.mu.Unlock()
+	e.logger.Info().Msg("all strategies resumed")
+}
+
+func (e *Engine) KillAll() {
+	e.mu.Lock()
+	for k := range e.stratPaused {
+		e.stratPaused[k] = true
+	}
+	e.mu.Unlock()
+
+	ctx := context.Background()
+	symbols := e.collectSymbols()
+	for _, symbol := range symbols {
+		e.orderMgr.CancelAllOpen(ctx, symbol)
+	}
+	e.riskMgr.MarkBreach()
+	e.alerts.Send(alert.LevelBreached, "Kill Switch Activated",
+		"All strategies paused, open orders cancelled, circuit breaker tripped")
+	e.logger.Warn().Msg("kill switch activated: all strategies paused, orders cancelled, breaker tripped")
+}
+
+func (e *Engine) reconcilePositions(ctx context.Context) {
+	balances, err := e.exchange.FetchBalance(ctx)
+	if err != nil {
+		e.logger.Error().Err(err).Msg("reconciliation: failed to fetch balances")
+		return
+	}
+	equity := calculateEquity(balances)
+	e.logger.Info().Float64("equity", equity).Msg("reconciliation: balance fetched")
+
+	for _, symbol := range e.collectSymbols() {
+		orders, err := e.exchange.FetchOpenOrders(ctx, symbol)
+		if err != nil {
+			e.logger.Error().Err(err).Str("symbol", symbol).Msg("reconciliation: failed to fetch open orders")
+			continue
+		}
+		if len(orders) > 0 {
+			e.logger.Warn().Str("symbol", symbol).Int("count", len(orders)).Msg("reconciliation: open orders found on exchange")
+		}
+	}
+}
+
+func (e *Engine) runPnLSnapshot(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.saveDailySnapshot()
+		}
+	}
+}
+
+func (e *Engine) runAlertMonitor(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	lastTradeCount := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if e.riskMgr.IsBreached() {
+				continue
+			}
+
+			equity := e.GetEquity()
+			dailyPnL, trades, _ := e.riskMgr.DailyStats()
+
+			if equity > 0 {
+				dailyLossPct := -dailyPnL / equity * 100
+				if dailyLossPct > e.cfg.Risk.MaxDailyLossPct*50 {
+					e.alerts.Send(alert.LevelWarn, "Approaching Daily Loss Limit",
+						fmt.Sprintf("Daily P&L: $%.2f (%.1f%% of equity) | Trades: %d", dailyPnL, dailyLossPct, trades))
+				}
+			}
+
+			if e.tradeCount > 0 && e.tradeCount-lastTradeCount >= 10 {
+				e.alerts.Send(alert.LevelInfo, "Trade Milestone",
+					fmt.Sprintf("%d trades executed | Daily P&L: $%.2f", e.tradeCount, dailyPnL))
+				lastTradeCount = e.tradeCount
+			}
+		}
+	}
+}
+
+func (e *Engine) saveDailySnapshot() {
+	dailyPnL, trades, wins := e.riskMgr.DailyStats()
+	date := time.Now().Format("2006-01-02")
+	if err := e.db.RecordDailyPnL(date, dailyPnL, trades, wins); err != nil {
+		e.logger.Error().Err(err).Msg("failed to save daily P&L snapshot")
+	}
+}
+
+func (e *Engine) forwardOrderBook(ob *types.OrderBook) {
+	type orderBookSetter interface {
+		SetOrderBook(ob *types.OrderBook)
+	}
+	if setter, ok := e.exchange.(orderBookSetter); ok {
+		setter.SetOrderBook(ob)
+	}
+}
