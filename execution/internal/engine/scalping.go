@@ -10,12 +10,18 @@ import (
 type ScalpingStrategy struct {
 	cfg    config.StrategyConfig
 	logger zerolog.Logger
+	prices *PriceHistory
 }
 
 func NewScalpingStrategy(cfg config.StrategyConfig, logger zerolog.Logger) *ScalpingStrategy {
+	emaPeriod := cfg.RSIPeriod
+	if emaPeriod == 0 {
+		emaPeriod = 200
+	}
 	return &ScalpingStrategy{
 		cfg:    cfg,
 		logger: logger.With().Str("strategy", "scalping").Logger(),
+		prices: NewPriceHistory(emaPeriod * 2),
 	}
 }
 
@@ -64,6 +70,20 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 
 	ratio := bidVolume / askVolume
 
+	// Update trend tracker (200 EMA on mid-price)
+	midPrice := (bestBid + bestAsk) / 2
+	s.prices.Add(midPrice)
+
+	trend := "neutral"
+	if s.prices.Len() >= 100 {
+		ema := s.computeEMA(200)
+		if ema > 0 && midPrice > ema*1.001 {
+			trend = "up"
+		} else if ema > 0 && midPrice < ema*0.999 {
+			trend = "down"
+		}
+	}
+
 	signal := s.getSignal(state)
 	signalID := ""
 	confidence := 0.0
@@ -73,6 +93,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 2.0 {
+		if trend == "down" {
+			return nil
+		}
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
@@ -87,6 +110,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 1.2 {
+		if trend == "down" {
+			return nil
+		}
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp long signal overridden by research short bias")
 			return nil
@@ -105,6 +131,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.5 {
+		if trend == "up" {
+			return nil
+		}
 		return &types.Decision{
 			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
@@ -119,6 +148,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.83 {
+		if trend == "up" {
+			return nil
+		}
 		if signal != nil && signal.Direction == types.SignalDirectionLong {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp short signal overridden by research long bias")
 			return nil
@@ -154,4 +186,17 @@ func (s *ScalpingStrategy) getSignal(state *types.MarketState) *types.Signal {
 		}
 	}
 	return nil
+}
+
+func (s *ScalpingStrategy) computeEMA(period int) float64 {
+	vals := s.prices.Values()
+	if len(vals) < period {
+		return 0
+	}
+	multiplier := 2.0 / float64(period+1)
+	ema := vals[0]
+	for _, v := range vals[1:] {
+		ema = (v-ema)*multiplier + ema
+	}
+	return ema
 }

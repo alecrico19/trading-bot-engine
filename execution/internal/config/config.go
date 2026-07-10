@@ -25,6 +25,8 @@ type RiskConfig struct {
 	StopLossPct               float64 `mapstructure:"stop_loss_pct"`
 	TrailingStopActivatePct   float64 `mapstructure:"trailing_stop_activate_pct"`
 	TrailingStopDistancePct   float64 `mapstructure:"trailing_stop_distance_pct"`
+	TakeProfit1RPct           float64 `mapstructure:"take_profit_1r_pct"`
+	TakeProfitTargetPct       float64 `mapstructure:"take_profit_target_pct"`
 }
 
 type StrategyConfig struct {
@@ -117,6 +119,12 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Risk.TrailingStopDistancePct == 0 {
 		c.Risk.TrailingStopDistancePct = 0.03
+	}
+	if c.Risk.TakeProfit1RPct == 0 {
+		c.Risk.TakeProfit1RPct = 0.01
+	}
+	if c.Risk.TakeProfitTargetPct == 0 {
+		c.Risk.TakeProfitTargetPct = 0.02
 	}
 	if c.Research.SignalMinConfidence == 0 {
 		c.Research.SignalMinConfidence = 0.6

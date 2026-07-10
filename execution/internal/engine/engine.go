@@ -654,6 +654,25 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		return
 	}
 
+	if pnlPct >= e.cfg.Risk.TakeProfitTargetPct {
+		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("full take-profit triggered")
+		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "take-profit-full")
+		e.mu.Lock()
+		e.entryPrice[symbol] = 0
+		e.highWater[symbol] = 0
+		e.mu.Unlock()
+		return
+	}
+
+	if pnlPct >= e.cfg.Risk.TakeProfit1RPct {
+		amount := baseHeld * 0.5
+		if amount > 0.00001 {
+			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("partial take-profit (50%)")
+			e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "take-profit-50")
+			e.entryPrice[symbol] = entry
+		}
+	}
+
 	if pnlPct >= e.cfg.Risk.TrailingStopActivatePct {
 		if ticker.Last > high {
 			e.mu.Lock()
