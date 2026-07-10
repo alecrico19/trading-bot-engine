@@ -724,6 +724,15 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 
 	pnlPct := (ticker.Last - entry) / entry
 
+	if pnlPct >= 0.0005 {
+		amount := baseHeld * 0.5
+		if amount > 0.00001 {
+			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("mini profit exit (0.05%)")
+			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "mini-profit")
+			e.recordExit(order, entry, symbol, "mini-profit")
+		}
+	}
+
 	if pnlPct <= -e.cfg.Risk.StopLossPct {
 		amount := baseHeld
 		e.logger.Warn().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("stop-loss triggered")
