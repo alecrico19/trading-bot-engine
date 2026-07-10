@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"github.com/rs/zerolog"
 
 	"trading-bot/execution/internal/config"
@@ -8,18 +10,20 @@ import (
 )
 
 type TickMomentumStrategy struct {
-	cfg       config.StrategyConfig
-	logger    zerolog.Logger
-	prices    map[string]*PriceHistory
-	lastSide  map[string]string
+	cfg           config.StrategyConfig
+	logger        zerolog.Logger
+	prices        map[string]*PriceHistory
+	lastSide      map[string]string
+	lastDecision  map[string]time.Time
 }
 
 func NewTickMomentumStrategy(cfg config.StrategyConfig, logger zerolog.Logger) *TickMomentumStrategy {
 	return &TickMomentumStrategy{
-		cfg:      cfg,
-		logger:   logger.With().Str("strategy", "tick-momentum").Logger(),
-		prices:   make(map[string]*PriceHistory),
-		lastSide: make(map[string]string),
+		cfg:          cfg,
+		logger:       logger.With().Str("strategy", "tick-momentum").Logger(),
+		prices:       make(map[string]*PriceHistory),
+		lastSide:     make(map[string]string),
+		lastDecision: make(map[string]time.Time),
 	}
 }
 
@@ -77,6 +81,10 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 		return nil
 	}
 
+	if time.Since(s.lastDecision[state.Symbol]) < 2*time.Second {
+		return nil
+	}
+
 	vals := hist.Values()
 	recent := vals[len(vals)-minTicks:]
 
@@ -117,8 +125,16 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 
 	upPct := float64(upCount) / float64(total)
 
+	var holding float64
+	for _, p := range state.Positions {
+		if p.Symbol == state.Symbol {
+			holding += abs(p.Amount)
+		}
+	}
+
 	if upPct >= 0.60 && !hasPosition {
 		s.lastSide[state.Symbol] = "buy"
+		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
@@ -134,11 +150,12 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 
 	if upPct <= 0.40 && hasPosition {
 		s.lastSide[state.Symbol] = "sell"
+		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
 			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
 			Side:     types.SideSell,
-			Amount:   0,
+			Amount:   holding,
 			Price:    ticker.Last,
 			Type:     types.TypeLimit,
 			Reason:   "tick momentum: 75%+ consecutive downticks (exit)",
@@ -148,11 +165,13 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 	}
 
 	if lastSide == "buy" && upPct <= 0.5 && hasPosition {
+		s.lastDecision[state.Symbol] = time.Now()
+		s.lastSide[state.Symbol] = "sell"
 		return &types.Decision{
 			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
 			Side:     types.SideSell,
-			Amount:   0,
+			Amount:   holding,
 			Price:    ticker.Last,
 			Type:     types.TypeLimit,
 			Reason:   "tick momentum: reverse signal (exit)",
