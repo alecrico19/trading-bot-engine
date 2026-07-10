@@ -44,10 +44,10 @@ class SignalGenerator:
             return sentiment.get("combined", 0) > threshold
         if key == "sentiment_below":
             return sentiment.get("combined", 0) < threshold
-        if key == "price_below_bb_lower" and indicators.bb_lower is not None:
-            return True
-        if key == "price_above_bb_upper" and indicators.bb_upper is not None:
-            return True
+        if key == "price_below_bb_lower" and indicators.bb_lower is not None and indicators.last_close is not None:
+            return indicators.last_close < indicators.bb_lower
+        if key == "price_above_bb_upper" and indicators.bb_upper is not None and indicators.last_close is not None:
+            return indicators.last_close > indicators.bb_upper
         return False
 
     def _rule_based_signal(self, symbol: str, indicators: IndicatorResult, sentiment: dict) -> Optional[dict]:

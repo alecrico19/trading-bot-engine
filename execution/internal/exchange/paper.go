@@ -149,6 +149,8 @@ func (p *PaperTrader) simulateFill(order *types.Order) {
 		cost := order.Amount * fillPrice
 		if !p.adjustBalance(quote, -cost) {
 			order.Status = types.StatusRejected
+			order.Filled = 0
+			order.AvgPrice = 0
 			p.logger.Warn().Float64("cost", cost).Str("quote", quote).Msg("insufficient balance for buy")
 			return
 		}
@@ -157,6 +159,8 @@ func (p *PaperTrader) simulateFill(order *types.Order) {
 	} else {
 		if !p.adjustBalance(base, -order.Amount) {
 			order.Status = types.StatusRejected
+			order.Filled = 0
+			order.AvgPrice = 0
 			p.logger.Warn().Float64("amount", order.Amount).Str("base", base).Msg("insufficient balance for sell")
 			return
 		}

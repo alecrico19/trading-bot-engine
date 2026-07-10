@@ -157,10 +157,15 @@ def run_backtest(df: pd.DataFrame, signals: np.ndarray, initial_capital: float =
     peak = capital
 
     for i in range(len(close)):
-        if signals[i] == 1 and position <= 0:
+        # Track equity bar-by-bar
+        eq_now = capital + position * close[i]
+        equity_curve.append(float(eq_now))
+        peak = max(peak, eq_now)
+
+        if signals[i] == 1:
             if position < 0:
                 pnl = (entry_price - close[i]) * abs(position)
-                pnl -= abs(position) * entry_price * fee_pct + abs(position) * close[i] * fee_pct
+                pnl -= abs(position) * close[i] * fee_pct * 2
                 capital += abs(position) * entry_price + pnl
                 trades += 1
                 pnl_list.append(pnl)
@@ -169,45 +174,30 @@ def run_backtest(df: pd.DataFrame, signals: np.ndarray, initial_capital: float =
                 else:
                     losses += 1
                 position = 0
-            size = capital * 0.1
-            position = size / close[i]
-            capital -= size
-            capital -= size * fee_pct
-            entry_price = close[i]
+            if position == 0:
+                size = capital * 0.1
+                position = size / close[i]
+                capital -= size * (1 + fee_pct)
+                entry_price = close[i]
 
-        elif signals[i] == -1 and position > 0:
-            pnl = (close[i] - entry_price) * position
-            pnl -= position * entry_price * fee_pct + position * close[i] * fee_pct
-            capital += position * close[i] - position * close[i] * fee_pct
-            trades += 1
-            pnl_list.append(pnl)
-            if pnl > 0:
-                wins += 1
-            else:
-                losses += 1
-            position = 0
-
-    if position != 0:
-        pnl = (close[-1] - entry_price) * position
-        pnl -= position * entry_price * fee_pct + position * close[-1] * fee_pct
-        trades += 1
-        pnl_list.append(pnl)
-        if pnl > 0:
-            wins += 1
-        else:
-            losses += 1
+        elif signals[i] == -1:
+            if position > 0:
+                pnl = (close[i] - entry_price) * position
+                pnl -= position * close[i] * fee_pct * 2
+                capital += position * close[i] - position * close[i] * fee_pct
+                trades += 1
+                pnl_list.append(pnl)
+                if pnl > 0:
+                    wins += 1
+                else:
+                    losses += 1
+                position = 0
 
     final_equity = capital + position * close[-1]
     total_return = (final_equity - initial_capital) / initial_capital
 
-    for i in range(len(close)):
-        val = capital
-        if position != 0:
-            val += position * close[i]
-        equity_curve.append(float(val))
-        peak = max(peak, val)
-
     max_dd = 0.0
+    peak = initial_capital
     for val in equity_curve:
         peak = max(peak, val)
         dd = (peak - val) / peak if peak > 0 else 0
@@ -258,7 +248,6 @@ def walk_forward(df: pd.DataFrame, strategy_fn, params: dict, window_size: int =
         test_end = min(test_start + step_size, len(df))
         test_df = df.iloc[test_start:test_end]
 
-        train_signals = strategy_fn(train_df, params)
         test_signals = strategy_fn(test_df, params)
         all_signals[test_start:test_end] = test_signals
 

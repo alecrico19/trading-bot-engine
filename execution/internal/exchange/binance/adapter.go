@@ -458,9 +458,9 @@ func parseOrderType(s string) types.OrderType {
 
 func tradeSide(isBuyerMaker bool) string {
 	if isBuyerMaker {
-		return string(types.SideBuy)
+		return string(types.SideSell)
 	}
-	return string(types.SideSell)
+	return string(types.SideBuy)
 }
 
 func toInt64(s string) int64 {

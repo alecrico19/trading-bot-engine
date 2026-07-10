@@ -15,6 +15,7 @@ class IndicatorResult:
     sma_50: Optional[float] = None
     macd: Optional[float] = None
     macd_signal: Optional[float] = None
+    last_close: Optional[float] = None
 
 
 class TechnicalAnalyzer:
@@ -31,6 +32,7 @@ class TechnicalAnalyzer:
         volume = df["volume"].astype(float).values if "volume" in df.columns else None
 
         result = IndicatorResult()
+        result.last_close = float(close[-1]) if len(close) > 0 else None
         result.rsi = self._rsi(close, self.rsi_period)
         bb = self._bollinger_bands(close, self.bb_period, self.bb_stddev)
         result.bb_upper = bb[0]
@@ -86,20 +88,36 @@ class TechnicalAnalyzer:
         if len(prices) < 26:
             return None, None
 
-        ema12 = TechnicalAnalyzer._ema(prices, 12)
-        ema26 = TechnicalAnalyzer._ema(prices, 26)
-        if ema12 is None or ema26 is None:
+        ema12_series = TechnicalAnalyzer._ema_series(prices, 12)
+        ema26_series = TechnicalAnalyzer._ema_series(prices, 26)
+        if ema12_series is None or ema26_series is None:
             return None, None
 
-        macd_line = ema12 - ema26
+        macd_series = ema12_series - ema26_series
+        macd_line = float(macd_series[-1])
 
-        macd_prices = np.array([macd_line])
-        for i in range(len(prices) - 1):
-            prev = macd_prices[-1]
-            macd_prices = np.append(macd_prices, prev + (2 / (9 + 1)) * (prev - prev))
+        # 9-period EMA of MACD series (signal line)
+        if len(macd_series) < 9:
+            return macd_line, None
 
-        signal = float(np.mean(macd_prices[-9:])) if len(macd_prices) >= 9 else None
+        multiplier = 2 / (9 + 1)
+        signal = float(np.mean(macd_series[:9]))
+        for val in macd_series[9:]:
+            signal = (val - signal) * multiplier + signal
+
         return macd_line, signal
+
+    @staticmethod
+    def _ema_series(prices: np.ndarray, period: int) -> Optional[np.ndarray]:
+        if len(prices) < period:
+            return None
+        ema = np.zeros(len(prices))
+        ema[period - 1] = np.mean(prices[:period])
+        multiplier = 2 / (period + 1)
+        for i in range(period, len(prices)):
+            ema[i] = (prices[i] - ema[i - 1]) * multiplier + ema[i - 1]
+        ema[:period - 1] = ema[period - 1]
+        return ema
 
     @staticmethod
     def _ema(prices: np.ndarray, period: int) -> Optional[float]:
