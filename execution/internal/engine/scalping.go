@@ -91,8 +91,8 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		confidence = signal.Confidence
 	}
 
-	if ratio > 2.0 {
-		if entryCount >= 3 {
+	if ratio > 1.5 {
+		if entryCount >= 10 {
 			return nil
 		}
 		return &types.Decision{
@@ -108,8 +108,8 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		}
 	}
 
-	if ratio > 1.2 {
-		if entryCount >= 3 {
+	if ratio > 1.05 {
+		if entryCount >= 10 {
 			return nil
 		}
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
@@ -129,7 +129,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		}
 	}
 
-	if ratio < 0.5 {
+	if ratio < 0.8 {
 		if !hasPosition {
 			return nil
 		}
@@ -146,7 +146,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		}
 	}
 
-	if ratio < 0.83 {
+	if ratio < 0.95 {
 		if !hasPosition {
 			return nil
 		}
