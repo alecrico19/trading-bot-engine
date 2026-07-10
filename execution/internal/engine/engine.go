@@ -18,6 +18,11 @@ import (
 	"trading-bot/execution/internal/types"
 )
 
+type EquityPoint struct {
+	Time  time.Time `json:"t"`
+	Value float64   `json:"v"`
+}
+
 type Engine struct {
 	cfg        *config.Config
 	exchange   exchange.Exchange
@@ -36,6 +41,7 @@ type Engine struct {
 	tradeCount  int
 	highWater   map[string]float64
 	entryPrice  map[string]float64
+	equityHist  []EquityPoint
 
 	mu     sync.RWMutex
 	running bool
@@ -123,6 +129,9 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	wg.Add(1)
 	go e.runStopLoss(ctx, &wg, symbols)
+
+	wg.Add(1)
+	go e.runEquityRecorder(ctx, &wg)
 
 	wg.Add(1)
 	go e.runPnLSnapshot(ctx, &wg)
@@ -539,6 +548,39 @@ func (e *Engine) GetStrategyPnL() map[string]float64 {
 		out[k] = v
 	}
 	return out
+}
+
+func (e *Engine) GetEquityCurve(limit int) []EquityPoint {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	start := len(e.equityHist) - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]EquityPoint, len(e.equityHist[start:]))
+	copy(out, e.equityHist[start:])
+	return out
+}
+
+func (e *Engine) runEquityRecorder(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			eq := e.GetEquity()
+			e.mu.Lock()
+			e.equityHist = append(e.equityHist, EquityPoint{Time: time.Now(), Value: eq})
+			if len(e.equityHist) > 1000 {
+				e.equityHist = e.equityHist[len(e.equityHist)-1000:]
+			}
+			e.mu.Unlock()
+		}
+	}
 }
 
 func (e *Engine) runStopLoss(ctx context.Context, wg *sync.WaitGroup, symbols []string) {

@@ -26,6 +26,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/positions", s.handlePositions)
 	mux.HandleFunc("/balance", s.handleBalance)
 	mux.HandleFunc("/trades", s.handleTrades)
+	mux.HandleFunc("/equity-curve", s.handleEquityCurve)
 	mux.HandleFunc("/pause", s.handlePause)
 	mux.HandleFunc("/resume", s.handleResume)
 	mux.HandleFunc("/kill", s.handleKill)
@@ -71,6 +72,10 @@ func (s *Server) handleBalance(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrades(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.engine.GetRecentTrades(50))
+}
+
+func (s *Server) handleEquityCurve(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.engine.GetEquityCurve(300))
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {

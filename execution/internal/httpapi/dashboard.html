@@ -108,6 +108,14 @@
     <div class="stat"><span class="label">Active Signals</span><span class="value" id="signals">—</span></div>
   </div>
 
+  <!-- Equity Chart -->
+  <div class="card">
+    <h2>Equity Curve</h2>
+    <svg id="equity-chart" width="100%" height="200" style="display:block;">
+      <text x="50%" y="50%" text-anchor="middle" fill="#565f89" font-size="14px">Collecting data...</text>
+    </svg>
+  </div>
+
   <!-- Positions Card -->
   <div class="card">
     <h2>Positions (<span id="pos-count">0</span>)</h2>
@@ -297,10 +305,70 @@ async function fetchTrades() {
   } catch(e) {}
 }
 
+async function fetchChart() {
+  try {
+    const resp = await fetch(API + '/equity-curve');
+    const data = await resp.json();
+    if (!data || !data.length) return;
+    renderChart(data);
+  } catch(e) {}
+}
+
+function renderChart(points) {
+  const svg = document.getElementById('equity-chart');
+  if (!points.length) return;
+
+  const w = svg.clientWidth || 600;
+  const h = 200;
+  const pad = { top: 10, right: 10, bottom: 20, left: 50 };
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  const values = points.map(p => p.v);
+  const minV = Math.min(...values) * 0.999;
+  const maxV = Math.max(...values) * 1.001;
+  const range = maxV - minV || 1;
+
+  const x = (i) => pad.left + (i / (points.length - 1)) * pw;
+  const y = (v) => pad.top + ph - ((v - minV) / range) * ph;
+
+  let polyPoints = '';
+  points.forEach((p, i) => {
+    polyPoints += `${x(i)},${y(p.v)} `;
+  });
+
+  let areaPoints = `${x(0)},${pad.top + ph} ` + polyPoints.trim() + ` ${x(points.length - 1)},${pad.top + ph}`;
+
+  // Y-axis labels
+  let yLabels = '';
+  for (let i = 0; i <= 3; i++) {
+    const val = minV + (range * i / 3);
+    const ly = pad.top + ph - ((val - minV) / range) * ph;
+    yLabels += `<text x="${pad.left - 5}" y="${ly + 4}" text-anchor="end" fill="#565f89" font-size="10">$${val.toFixed(2)}</text>`;
+  }
+
+  const lastVal = points[points.length - 1];
+  const color = (lastVal.v >= points[0].v) ? '#9ece6a' : '#f7768e';
+
+  svg.innerHTML = `
+    ${yLabels}
+    <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + ph}" stroke="#2a2a4a" stroke-width="1"/>
+    <line x1="${pad.left}" y1="${y(points[0].v)}" x2="${pad.left + pw}" y2="${y(points[0].v)}" stroke="#2a2a4a" stroke-width="1" stroke-dasharray="4,4"/>
+    <polygon points="${areaPoints}" fill="${color}" opacity="0.05"/>
+    <polyline points="${polyPoints.trim()}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${x(points.length - 1)}" cy="${y(lastVal.v)}" r="4" fill="${color}"/>
+    <text x="${x(points.length - 1) + 8}" y="${y(lastVal.v) + 4}" fill="${color}" font-size="11" font-weight="bold">$${lastVal.v.toFixed(2)}</text>
+  `;
+}
+
 fetchData();
 fetchTrades();
+fetchChart();
 setInterval(fetchData, 1000);
 setInterval(fetchTrades, 5000);
+setInterval(fetchChart, 5000);
 </script>
 </body>
 </html>
