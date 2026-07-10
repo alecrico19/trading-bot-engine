@@ -5,11 +5,11 @@ exchanges:
     testnet: true
 
 risk:
-  max_position_pct: 0.10
+  max_position_pct: 0.08
   max_daily_loss_pct: 0.05
-  max_concurrent_positions: 3
+  max_concurrent_positions: 5
   circuit_breaker_drawdown_pct: 0.15
-  max_order_size_usd: 200
+  max_order_size_usd: 500
   min_order_size_usd: 10
   max_price_deviation_pct: 0.02
   stop_loss_pct: 0.05
@@ -27,7 +27,7 @@ strategies:
   scalping:
     enabled: true
     symbols: ["BTCUSDT", "ETHUSDT"]
-    order_book_depth: 20
+    order_book_depth: 10
     min_spread_pct: 0.05
     position_size_usd: 100
 
