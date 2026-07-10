@@ -49,6 +49,9 @@ func (p *PaperTrader) FetchBalance(ctx context.Context) ([]types.Balance, error)
 	defer p.mu.RUnlock()
 	result := make([]types.Balance, 0, len(p.balances))
 	for _, b := range p.balances {
+		if b.Asset == "" {
+			continue
+		}
 		result = append(result, b)
 	}
 	return result, nil
@@ -144,23 +147,32 @@ func (p *PaperTrader) simulateFill(order *types.Order) {
 
 	if order.Side == types.SideBuy {
 		cost := order.Amount * fillPrice
-		p.adjustBalance(quote, -cost)
+		if !p.adjustBalance(quote, -cost) {
+			order.Status = types.StatusRejected
+			p.logger.Warn().Float64("cost", cost).Str("quote", quote).Msg("insufficient balance for buy")
+			return
+		}
 		p.adjustBalance(base, order.Amount*0.999)
 		order.Fee = order.Amount * fillPrice * 0.001
 	} else {
-		p.adjustBalance(base, -order.Amount)
+		if !p.adjustBalance(base, -order.Amount) {
+			order.Status = types.StatusRejected
+			p.logger.Warn().Float64("amount", order.Amount).Str("base", base).Msg("insufficient balance for sell")
+			return
+		}
 		p.adjustBalance(quote, order.Amount*fillPrice*0.999)
 		order.Fee = order.Amount * fillPrice * 0.001
 	}
 }
 
-func (p *PaperTrader) adjustBalance(asset string, delta float64) {
+func (p *PaperTrader) adjustBalance(asset string, delta float64) bool {
 	b := p.balances[asset]
 	b.Free += delta
 	if b.Free < 0 {
-		b.Free = 0
+		return false
 	}
 	p.balances[asset] = b
+	return true
 }
 
 func (p *PaperTrader) splitSymbol(symbol string) (string, string) {
