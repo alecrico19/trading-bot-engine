@@ -683,7 +683,7 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 	e.mu.RLock()
 	scalpEntryTime := e.entryTime[symbol]
 	e.mu.RUnlock()
-	if !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 90*time.Second && pnlPct > 0 {
+	if false && !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 90*time.Second && pnlPct > 0 {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("time-based exit (30s, in profit)")
 		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "time-exit")
 		e.recordExit(order, entry, symbol, "time-exit")
