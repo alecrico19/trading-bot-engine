@@ -348,9 +348,16 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 			order.SignalID = decision.SignalID
 		}
 
-		pnl := (ticker.Last - order.AvgPrice) * order.Filled
-		if order.Side == types.SideSell {
-			pnl = (order.AvgPrice - ticker.Last) * order.Filled
+		pnl := 0.0
+		if order.Side == types.SideBuy {
+			pnl = 0
+		} else {
+			e.mu.RLock()
+			entry := e.entryPrice[decision.Symbol]
+			e.mu.RUnlock()
+			if entry > 0 {
+				pnl = (order.AvgPrice - entry) * order.Filled
+			}
 		}
 		e.db.RecordTrade(order, pnl)
 		e.riskMgr.RecordTrade(pnl)
