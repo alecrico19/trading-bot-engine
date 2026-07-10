@@ -92,28 +92,45 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 1.5 {
-		if entryCount >= 10 {
+		if !hasPosition {
 			return nil
 		}
 		return &types.Decision{
-			Action:   types.ActionBuy,
+			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
-			Side:     types.SideBuy,
+			Side:     types.SideSell,
 			Amount:   0,
 			Price:    bestAsk,
 			Type:     types.TypeLimit,
-			Reason:   "strong order book imbalance: heavy bid volume",
+			Reason:   "sell into strength: heavy bid volume",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
 	}
 
 	if ratio > 1.05 {
-		if entryCount >= 10 {
+		if !hasPosition {
 			return nil
 		}
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
-			s.logger.Debug().Float64("ratio", ratio).Msg("scalp long signal overridden by research short bias")
+			s.logger.Debug().Float64("ratio", ratio).Msg("sell signal overridden by research short bias")
+			return nil
+		}
+		return &types.Decision{
+			Action:   types.ActionSell,
+			Symbol:   state.Symbol,
+			Side:     types.SideSell,
+			Amount:   0,
+			Price:    bestAsk,
+			Type:     types.TypeLimit,
+			Reason:   "sell into strength: heavy bid volume",
+			SignalID: signalID,
+			Strategy: s.Name(),
+		}
+	}
+
+	if ratio < 0.8 {
+		if entryCount >= 10 {
 			return nil
 		}
 		return &types.Decision{
@@ -121,47 +138,30 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 			Symbol:   state.Symbol,
 			Side:     types.SideBuy,
 			Amount:   0,
-			Price:    bestAsk,
-			Type:     types.TypeLimit,
-			Reason:   "order book imbalance: heavy bid volume",
-			SignalID: signalID,
-			Strategy: s.Name(),
-		}
-	}
-
-	if ratio < 0.8 {
-		if !hasPosition {
-			return nil
-		}
-		return &types.Decision{
-			Action:   types.ActionSell,
-			Symbol:   state.Symbol,
-			Side:     types.SideSell,
-			Amount:   0,
 			Price:    bestBid,
 			Type:     types.TypeLimit,
-			Reason:   "strong order book imbalance: heavy ask volume",
+			Reason:   "buy into weakness: heavy ask volume",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
 	}
 
 	if ratio < 0.95 {
-		if !hasPosition {
+		if entryCount >= 10 {
 			return nil
 		}
 		if signal != nil && signal.Direction == types.SignalDirectionLong {
-			s.logger.Debug().Float64("ratio", ratio).Msg("scalp short signal overridden by research long bias")
+			s.logger.Debug().Float64("ratio", ratio).Msg("buy signal overridden by research long bias")
 			return nil
 		}
 		return &types.Decision{
-			Action:   types.ActionSell,
+			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
-			Side:     types.SideSell,
+			Side:     types.SideBuy,
 			Amount:   0,
 			Price:    bestBid,
 			Type:     types.TypeLimit,
-			Reason:   "order book imbalance: heavy ask volume",
+			Reason:   "buy into weakness: heavy ask volume",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
