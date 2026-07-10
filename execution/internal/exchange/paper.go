@@ -183,9 +183,16 @@ func (p *PaperTrader) adjustBalance(asset string, delta float64) bool {
 }
 
 func (p *PaperTrader) splitSymbol(symbol string) (string, string) {
-	parts := strings.Split(symbol, "/")
-	if len(parts) == 2 {
-		return parts[0], parts[1]
+	if strings.Contains(symbol, "/") {
+		parts := strings.Split(symbol, "/")
+		if len(parts) == 2 {
+			return parts[0], parts[1]
+		}
+	}
+	for _, quote := range []string{"USDT", "USDC", "USD", "BUSD", "BTC", "ETH", "BNB"} {
+		if strings.HasSuffix(symbol, quote) && len(symbol) > len(quote) {
+			return symbol[:len(symbol)-len(quote)], quote
+		}
 	}
 	return symbol, "USDT"
 }

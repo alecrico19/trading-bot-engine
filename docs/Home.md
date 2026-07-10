@@ -4,8 +4,34 @@
 
 ## Architecture
 
-- [[Trading Bot — Architecture Plan]] — Full architecture plan, tech stack, decisions
+- [[trading-bot-plan]] — Full architecture plan, tech stack, decisions
 - [[SETUP]] — Setup and testing guide
+- [[code-audit]] — Full audit results (11 critical, 17 high, 12 medium bugs fixed)
+
+## Active Plans & Fixes
+
+- [[aggressive-tuning]] — Lower scalping thresholds, more positions
+- [[equity-chart-plan]] — Live P&L equity curve
+- [[improvements-plan]] — Stop-loss, trailing stop, strategy P&L, trade history
+- [[research-integration]] — 200 EMA trend filter + take-profit from pro scalper research
+- [[strategy-assessment]] — Two strategies: enough or add more?
+- [[next-steps]] — Overnight run → review → live trading
+- [[remote-access-plan]] — Tailscale for phone dashboard access
+
+## Bug Fixes Applied
+
+- [[pnl-fix-plan]] — P&L using entry price not ticker
+- [[pnl-bug-fix]] — Paper trader phantom money
+- [[positions-fix]] — Holdings invisible after buys
+- [[zero-trade-fix]] — Rejected orders in trade history
+- [[ws-reconnect-plan]] — WebSocket auto-reconnect
+- [[systemd-fix-plan]] — Auto-start on boot
+- [[backtesting-plan]] — Walk-forward backtesting engine
+- [[gold-trading-plan]] — Gold (XAU/USD) via forex brokers
+
+## Dashboard
+
+- [[dashboard-fix-plan]] — Total portfolio equity + holdings-based positions
 
 ## Services
 
@@ -35,12 +61,12 @@
 ./scripts/start.sh headless  # Headless + API on :8080
 ./scripts/start.sh research  # Research service
 ./scripts/start.sh telegram  # Telegram bot
-./scripts/start.sh all       # All services
+./scripts/start.sh backtest  # Backtest optimizer
 ```
 
 ## Exchange Support
 
-- Binance (testnet + live, WebSocket)
+- Binance (testnet + live, WebSocket with auto-reconnect)
 - Coinbase Pro (REST)
 - Kraken (REST)
 - Alpaca (stocks, REST)

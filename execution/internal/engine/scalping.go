@@ -70,19 +70,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 
 	ratio := bidVolume / askVolume
 
-	// Update trend tracker (200 EMA on mid-price)
+	// Update trend tracker (EMA on mid-price for informational use)
 	midPrice := (bestBid + bestAsk) / 2
 	s.prices.Add(midPrice)
-
-	trend := "neutral"
-	if s.prices.Len() >= 100 {
-		ema := s.computeEMA(200)
-		if ema > 0 && midPrice > ema*1.001 {
-			trend = "up"
-		} else if ema > 0 && midPrice < ema*0.999 {
-			trend = "down"
-		}
-	}
 
 	signal := s.getSignal(state)
 	signalID := ""
@@ -93,9 +83,6 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 2.0 {
-		if trend == "down" {
-			return nil
-		}
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
@@ -110,9 +97,6 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 1.2 {
-		if trend == "down" {
-			return nil
-		}
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp long signal overridden by research short bias")
 			return nil
@@ -131,9 +115,6 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.5 {
-		if trend == "up" {
-			return nil
-		}
 		return &types.Decision{
 			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
@@ -148,9 +129,6 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.83 {
-		if trend == "up" {
-			return nil
-		}
 		if signal != nil && signal.Direction == types.SignalDirectionLong {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp short signal overridden by research long bias")
 			return nil
