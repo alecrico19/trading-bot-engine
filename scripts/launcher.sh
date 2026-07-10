@@ -76,10 +76,19 @@ if [ -x "$TAILSCALED_BIN" ]; then
     mkdir -p "$HOME/.tailscale"
     $TAILSCALED_BIN --tun=userspace-networking --socket="$TAILSCALE_SOCK" --state="$TAILSCALE_STATE" > /dev/null 2>&1 &
     TAILSCALED_PID=$!
-    sleep 2
-    if kill -0 $TAILSCALED_PID 2>/dev/null; then
+    for i in $(seq 1 20); do
+        if [ -S "$TAILSCALE_SOCK" ]; then
+            break
+        fi
+        sleep 0.5
+    done
+    if [ -S "$TAILSCALE_SOCK" ]; then
         $TAILSCALE_BIN --socket="$TAILSCALE_SOCK" up --accept-routes > /dev/null 2>&1 &
-        TS_IP=$($TAILSCALE_BIN --socket="$TAILSCALE_SOCK" ip 2>/dev/null)
+        for i in $(seq 1 5); do
+            TS_IP=$($TAILSCALE_BIN --socket="$TAILSCALE_SOCK" ip 2>/dev/null | head -1)
+            [ -n "$TS_IP" ] && break
+            sleep 2
+        done
         if [ -n "$TS_IP" ]; then
             echo -e "${GREEN}$TS_IP${RESET}"
         else
