@@ -9,6 +9,10 @@ mkdir -p "$LOG_DIR"
 
 REDIS_BIN="$HOME/redis/redis-server"
 REDIS_CLI="$HOME/redis/redis-cli"
+TAILSCALE_BIN="$HOME/bin/tailscale"
+TAILSCALED_BIN="$HOME/bin/tailscaled"
+TAILSCALE_SOCK="$HOME/.tailscale/tailscaled.sock"
+TAILSCALE_STATE="$HOME/.tailscale/tailscaled.state"
 
 export GOROOT="$HOME/go"
 export GOPATH="$HOME/go-tools"
@@ -27,9 +31,11 @@ cleanup() {
     kill $ENGINE_PID 2>/dev/null
     kill $RESEARCH_PID 2>/dev/null
     kill $TELEGRAM_PID 2>/dev/null
+    kill $TAILSCALED_PID 2>/dev/null
     wait $ENGINE_PID 2>/dev/null
     wait $RESEARCH_PID 2>/dev/null
     wait $TELEGRAM_PID 2>/dev/null
+    wait $TAILSCALED_PID 2>/dev/null
     echo -e "${GREEN}All services stopped.${RESET}"
     exit 0
 }
@@ -61,6 +67,29 @@ elif [ -x "$REDIS_BIN" ]; then
     fi
 else
     echo -e "${YELLOW}not installed (signals disabled)${RESET}"
+fi
+
+# Start Tailscale
+TAILSCALED_PID=""
+echo -ne "${CYAN}Starting Tailscale...${RESET} "
+if [ -x "$TAILSCALED_BIN" ]; then
+    mkdir -p "$HOME/.tailscale"
+    $TAILSCALED_BIN --tun=userspace-networking --socket="$TAILSCALE_SOCK" --state="$TAILSCALE_STATE" > /dev/null 2>&1 &
+    TAILSCALED_PID=$!
+    sleep 2
+    if kill -0 $TAILSCALED_PID 2>/dev/null; then
+        $TAILSCALE_BIN --socket="$TAILSCALE_SOCK" up --accept-routes > /dev/null 2>&1 &
+        TS_IP=$($TAILSCALE_BIN --socket="$TAILSCALE_SOCK" ip 2>/dev/null)
+        if [ -n "$TS_IP" ]; then
+            echo -e "${GREEN}$TS_IP${RESET}"
+        else
+            echo -e "${YELLOW}running (needs auth)${RESET}"
+        fi
+    else
+        echo -e "${RED}FAILED${RESET}"
+    fi
+else
+    echo -e "${YELLOW}not installed${RESET}"
 fi
 
 # Start engine
@@ -111,6 +140,9 @@ fi
 echo ""
 echo -e "${BOLD}─────────────────────────────────────${RESET}"
 echo -e "${GREEN}Engine API:${RESET}    http://localhost:8080/status"
+if [ -n "$TS_IP" ]; then
+    echo -e "${GREEN}Tailscale:${RESET}      http://$TS_IP:8080"
+fi
 echo -e "${GREEN}Logs:${RESET}         $LOG_DIR/"
 echo -e "${YELLOW}Press Ctrl+C to stop all services${RESET}"
 echo -e "${BOLD}─────────────────────────────────────${RESET}"
