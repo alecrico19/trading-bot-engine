@@ -94,7 +94,7 @@ fi
 TELEGRAM_PID=""
 if [ -n "$TELEGRAM_TOKEN" ]; then
     echo -ne "${CYAN}Starting Telegram bot...${RESET} "
-    export AUTHORIZED_USERS="${AUTHORIZED_USERS:-}"
+    export AUTHORIZED_USERS="${AUTHORIZED_USERS:-1473027968}"
     API_URL="http://localhost:8080" python3 telegram/bot.py > "$LOG_DIR/telegram.log" 2>&1 &
     TELEGRAM_PID=$!
     sleep 1

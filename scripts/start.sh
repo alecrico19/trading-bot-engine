@@ -74,7 +74,7 @@ case "${1:-run}" in
       exit 1
     fi
     cd "$PROJECT_DIR"
-    export AUTHORIZED_USERS="${AUTHORIZED_USERS:-}"
+    export AUTHORIZED_USERS="${AUTHORIZED_USERS:-1473027968}"
     export API_URL="${API_URL:-http://localhost:8080}"
     python3 telegram/bot.py
     ;;
