@@ -48,8 +48,17 @@ case "${1:-run}" in
 
   redis)
     echo "Starting Redis..."
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" up -d redis
-    echo "Redis running on localhost:6379"
+    if [ -x "$HOME/redis/redis-server" ]; then
+      if "$HOME/redis/redis-cli" ping &>/dev/null; then
+        echo "Redis already running"
+      else
+        "$HOME/redis/redis-server" --daemonize yes --port 6379 --logfile /dev/null
+        sleep 1
+        echo "Redis running on localhost:6379"
+      fi
+    else
+      echo "Redis not installed at ~/redis/"
+    fi
     ;;
 
   research)

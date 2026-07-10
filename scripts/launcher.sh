@@ -1,14 +1,14 @@
 #!/bin/bash
 # Trading Bot Launcher — starts all services in a terminal window
 
-set -e
+set -o pipefail
 
 PROJECT_DIR="$HOME/trading-bot"
 LOG_DIR="/tmp/trading-bot-logs"
 mkdir -p "$LOG_DIR"
 
-REDIS_BIN="/tmp/redis-7.4.2/src/redis-server"
-REDIS_CLI="/tmp/redis-7.4.2/src/redis-cli"
+REDIS_BIN="$HOME/redis/redis-server"
+REDIS_CLI="$HOME/redis/redis-cli"
 
 export GOROOT="$HOME/go"
 export GOPATH="$HOME/go-tools"
@@ -44,16 +44,18 @@ echo ""
 
 # Start Redis
 echo -ne "${CYAN}Starting Redis...${RESET} "
-if $REDIS_CLI ping &>/dev/null; then
+if [ -x "$REDIS_CLI" ] && $REDIS_CLI ping &>/dev/null; then
     echo -e "${GREEN}already running${RESET}"
-else
-    $REDIS_BIN --daemonize yes --port 6379 &>/dev/null
+elif [ -x "$REDIS_BIN" ]; then
+    $REDIS_BIN --daemonize yes --port 6379 --logfile /dev/null &>/dev/null
     sleep 1
     if $REDIS_CLI ping &>/dev/null; then
         echo -e "${GREEN}OK${RESET}"
     else
         echo -e "${RED}FAILED${RESET}"
     fi
+else
+    echo -e "${YELLOW}not installed (signals disabled)${RESET}"
 fi
 
 # Start engine
