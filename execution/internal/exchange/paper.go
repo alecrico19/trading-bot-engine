@@ -171,6 +171,9 @@ func (p *PaperTrader) simulateFill(order *types.Order) {
 
 func (p *PaperTrader) adjustBalance(asset string, delta float64) bool {
 	b := p.balances[asset]
+	if b.Asset == "" {
+		b.Asset = asset
+	}
 	b.Free += delta
 	if b.Free < 0 {
 		return false
