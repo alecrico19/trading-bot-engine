@@ -137,9 +137,8 @@ func (s *Store) GetRecentTrades(symbol string, limit int) ([]types.Order, error)
 	var trades []types.Order = make([]types.Order, 0)
 	for rows.Next() {
 		var o types.Order
-		var pnl float64
 		var createdAt time.Time
-		if err := rows.Scan(&o.ID, &o.Exchange, &o.Symbol, &o.Side, &o.Filled, &o.AvgPrice, &o.Fee, &o.Strategy, &o.SignalID, &pnl, &createdAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Exchange, &o.Symbol, &o.Side, &o.Filled, &o.AvgPrice, &o.Fee, &o.Strategy, &o.SignalID, &o.Pnl, &createdAt); err != nil {
 			return nil, err
 		}
 		o.CreatedAt = createdAt

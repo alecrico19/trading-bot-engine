@@ -88,6 +88,7 @@ type Order struct {
 	Fee           float64     `json:"fee"`
 	Strategy      string      `json:"strategy"`
 	SignalID      string      `json:"signal_id"`
+	Pnl           float64     `json:"pnl"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
 }
