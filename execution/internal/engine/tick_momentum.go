@@ -77,6 +77,9 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 	if minTicks == 0 {
 		minTicks = 5
 	}
+	if hist.Len() < 50 {
+		return nil
+	}
 	if hist.Len() < minTicks {
 		return nil
 	}
