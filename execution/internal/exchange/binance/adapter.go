@@ -257,93 +257,127 @@ func (a *Adapter) SubscribeOrderBook(ctx context.Context, symbol string) (<-chan
 	symbolLower := strings.ToLower(symbol)
 	ch := make(chan *types.OrderBook, 100)
 
-	errHandler := func(err error) {
-		a.logger.Error().Err(err).Str("symbol", symbol).Msg("order book stream error")
-	}
+	go a.reconnectLoop(ctx, symbol, "orderbook", func(ctx context.Context) error {
+		errHandler := func(err error) {
+			a.logger.Error().Err(err).Str("symbol", symbol).Msg("order book stream error")
+		}
 
-	depthHandler := func(event *binance.WsDepthEvent) {
-		bids := make([]types.OrderBookLevel, len(event.Bids))
-		for i, b := range event.Bids {
-			bids[i] = types.OrderBookLevel{
-				Price:    parseFloat(b.Price),
-				Quantity: parseFloat(b.Quantity),
+		depthHandler := func(event *binance.WsDepthEvent) {
+			bids := make([]types.OrderBookLevel, len(event.Bids))
+			for i, b := range event.Bids {
+				bids[i] = types.OrderBookLevel{
+					Price:    parseFloat(b.Price),
+					Quantity: parseFloat(b.Quantity),
+				}
+			}
+			asks := make([]types.OrderBookLevel, len(event.Asks))
+			for i, a := range event.Asks {
+				asks[i] = types.OrderBookLevel{
+					Price:    parseFloat(a.Price),
+					Quantity: parseFloat(a.Quantity),
+				}
+			}
+			select {
+			case ch <- &types.OrderBook{
+				Symbol:    symbol,
+				Bids:      bids,
+				Asks:      asks,
+				Timestamp: time.Now().UnixMilli(),
+			}:
+			case <-ctx.Done():
 			}
 		}
-		asks := make([]types.OrderBookLevel, len(event.Asks))
-		for i, a := range event.Asks {
-			asks[i] = types.OrderBookLevel{
-				Price:    parseFloat(a.Price),
-				Quantity: parseFloat(a.Quantity),
-			}
-		}
-		select {
-		case ch <- &types.OrderBook{
-			Symbol:    symbol,
-			Bids:      bids,
-			Asks:      asks,
-			Timestamp: time.Now().UnixMilli(),
-		}:
-		case <-ctx.Done():
-		}
-	}
 
-	done, stop, err := binance.WsDepthServe100Ms(symbolLower, depthHandler, errHandler)
-	if err != nil {
-		close(ch)
-		return nil, fmt.Errorf("subscribe order book: %w", err)
-	}
+		done, stop, err := binance.WsDepthServe100Ms(symbolLower, depthHandler, errHandler)
+		if err != nil {
+			return err
+		}
 
-	go func() {
 		select {
 		case <-ctx.Done():
+			select { case stop <- struct{}{}: default: }
 		case <-done:
+			select { case stop <- struct{}{}: default: }
+			return fmt.Errorf("stream ended")
 		}
-		select {
-		case stop <- struct{}{}:
-		default:
-		}
-	}()
+		return nil
+	})
 
 	return ch, nil
+}
+
+func (a *Adapter) reconnectLoop(ctx context.Context, symbol, streamType string, connectFn func(ctx context.Context) error) {
+	backoff := 1 * time.Second
+	maxBackoff := 30 * time.Second
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		a.logger.Debug().Str("symbol", symbol).Str("type", streamType).Msg("connecting stream")
+		err := connectFn(ctx)
+		if err == nil {
+			backoff = 1 * time.Second
+			a.logger.Warn().Str("symbol", symbol).Str("type", streamType).Dur("retry_in", backoff).Msg("stream disconnected, reconnecting")
+		} else if err.Error() == "stream ended" {
+			backoff = 1 * time.Second
+			a.logger.Warn().Str("symbol", symbol).Str("type", streamType).Msg("stream ended naturally, reconnecting")
+		} else {
+			a.logger.Error().Err(err).Str("symbol", symbol).Str("type", streamType).Dur("retry_in", backoff).Msg("stream error")
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff = backoff * 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
 }
 
 func (a *Adapter) SubscribeTrades(ctx context.Context, symbol string) (<-chan *types.Trade, error) {
 	symbolLower := strings.ToLower(symbol)
 	ch := make(chan *types.Trade, 100)
 
-	errHandler := func(err error) {
-		a.logger.Error().Err(err).Str("symbol", symbol).Msg("trade stream error")
-	}
-
-	tradeHandler := func(event *binance.WsAggTradeEvent) {
-		select {
-		case ch <- &types.Trade{
-			Symbol:    symbol,
-			Side:      tradeSide(event.IsBuyerMaker),
-			Price:     parseFloat(event.Price),
-			Quantity:  parseFloat(event.Quantity),
-			Timestamp: event.Time,
-		}:
-		case <-ctx.Done():
+	go a.reconnectLoop(ctx, symbol, "trades", func(ctx context.Context) error {
+		errHandler := func(err error) {
+			a.logger.Error().Err(err).Str("symbol", symbol).Msg("trade stream error")
 		}
-	}
 
-	done, stop, err := binance.WsAggTradeServe(symbolLower, tradeHandler, errHandler)
-	if err != nil {
-		close(ch)
-		return nil, fmt.Errorf("subscribe trades: %w", err)
-	}
+		tradeHandler := func(event *binance.WsAggTradeEvent) {
+			select {
+			case ch <- &types.Trade{
+				Symbol:    symbol,
+				Side:      tradeSide(event.IsBuyerMaker),
+				Price:     parseFloat(event.Price),
+				Quantity:  parseFloat(event.Quantity),
+				Timestamp: event.Time,
+			}:
+			case <-ctx.Done():
+			}
+		}
 
-	go func() {
+		done, stop, err := binance.WsAggTradeServe(symbolLower, tradeHandler, errHandler)
+		if err != nil {
+			return err
+		}
+
 		select {
 		case <-ctx.Done():
+			select { case stop <- struct{}{}: default: }
 		case <-done:
+			select { case stop <- struct{}{}: default: }
+			return fmt.Errorf("stream ended")
 		}
-		select {
-		case stop <- struct{}{}:
-		default:
-		}
-	}()
+		return nil
+	})
 
 	return ch, nil
 }
