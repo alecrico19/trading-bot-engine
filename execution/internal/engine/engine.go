@@ -356,6 +356,10 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 			order.SignalID = decision.SignalID
 		}
 
+		if order.Status != types.StatusFilled && order.Status != types.StatusPartiallyFilled {
+			return
+		}
+
 		pnl := 0.0
 		if order.Side == types.SideBuy {
 			pnl = 0
