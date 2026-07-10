@@ -78,6 +78,12 @@ case "${1:-run}" in
     python3 telegram/bot.py
     ;;
 
+  backtest)
+    echo "Running backtest..."
+    cd "$PROJECT_DIR"
+    PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" python3 research/backtest/runner.py --symbols "${2:-BTC/USDT,ETH/USDT}" --days "${3:-7}" --optimize --json
+    ;;
+
   all)
     echo "Starting all services (execution + research + telegram)..."
     "$0" redis
@@ -89,7 +95,7 @@ case "${1:-run}" in
     ;;
 
   *)
-    echo "Usage: $0 {run|headless|live|build|redis|research|telegram|all}"
+    echo "Usage: $0 {run|headless|live|build|redis|research|telegram|backtest|all}"
     exit 1
     ;;
 esac
