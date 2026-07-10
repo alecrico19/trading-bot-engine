@@ -118,6 +118,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	for _, symbol := range symbols {
 		wg.Add(1)
 		go e.runOrderBookLoop(ctx, &wg, symbol, decisionCh, tickerCh)
+
+		wg.Add(1)
+		go e.runTradeStream(ctx, &wg, symbol, decisionCh)
 	}
 
 	wg.Add(1)
@@ -297,6 +300,51 @@ func (e *Engine) runSignalLoop(ctx context.Context, wg *sync.WaitGroup, signalCh
 			e.mu.Unlock()
 
 			e.db.RecordSignal(sig, "logged")
+		}
+	}
+}
+
+func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol string, decisionCh chan<- *types.Decision) {
+	defer wg.Done()
+
+	tradeCh, err := e.marketData.SubscribeTrades(ctx, symbol)
+	if err != nil {
+		e.logger.Error().Err(err).Str("symbol", symbol).Msg("failed to subscribe trades")
+		return
+	}
+	e.logger.Info().Str("symbol", symbol).Msg("trade stream started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case trade, ok := <-tradeCh:
+			if !ok {
+				return
+			}
+			for _, strat := range e.strategies {
+				if strat.Name() != "tick-momentum" || !e.isStrategyForSymbol("tick-momentum", symbol) {
+					continue
+				}
+				e.mu.RLock()
+				paused := e.stratPaused[strat.Name()]
+				e.mu.RUnlock()
+				if paused {
+					continue
+				}
+				state := e.buildMarketState(symbol)
+				ticker, _ := e.marketData.FetchTicker(ctx, symbol)
+				state.Ticker = ticker
+				_ = trade
+				decision := strat.Evaluate(state)
+				if decision != nil {
+					select {
+					case decisionCh <- decision:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
 		}
 	}
 }

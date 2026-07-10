@@ -105,6 +105,8 @@ func main() {
 			eng.RegisterStrategy(engine.NewScalpingStrategy(sc, logger))
 		case "mean-reversion":
 			eng.RegisterStrategy(engine.NewMeanReversionStrategy(sc, logger))
+		case "tick-momentum":
+			eng.RegisterStrategy(engine.NewTickMomentumStrategy(sc, logger))
 		default:
 			logger.Warn().Str("strategy", name).Msg("unknown strategy, skipping")
 		}
