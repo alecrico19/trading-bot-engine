@@ -42,6 +42,11 @@ echo -e "${BOLD}${GREEN}║       TRADING BOT LAUNCHER           ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════╝${RESET}"
 echo ""
 
+# Clean stale ports from previous runs
+echo -ne "${CYAN}Cleaning stale ports...${RESET} "
+fuser -k 8080/tcp 2>/dev/null
+echo -e "${GREEN}done${RESET}"
+
 # Start Redis
 echo -ne "${CYAN}Starting Redis...${RESET} "
 if [ -x "$REDIS_CLI" ] && $REDIS_CLI ping &>/dev/null; then
