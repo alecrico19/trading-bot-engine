@@ -654,6 +654,11 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 	high := e.highWater[symbol]
 	e.mu.RUnlock()
 
+	if entry > 0 && (ticker.Last < entry*0.90 || ticker.Last > entry*1.10) {
+		e.logger.Warn().Float64("ticker", ticker.Last).Float64("entry", entry).Str("symbol", symbol).Msg("ticker price anomaly, skipping")
+		return
+	}
+
 	if entry <= 0 {
 		return
 	}
@@ -666,7 +671,8 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		e.alerts.Send(alert.LevelWarn, "Stop-Loss Triggered",
 			fmt.Sprintf("%s: %.1f%% loss, closing at $%.2f", symbol, pnlPct*100, ticker.Last))
 
-		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "stop-loss")
+		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "stop-loss")
+		e.recordExit(order, entry, symbol, "stop-loss")
 		e.mu.Lock()
 		e.entryPrice[symbol] = 0
 		e.highWater[symbol] = 0
@@ -679,7 +685,8 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 	e.mu.RUnlock()
 	if !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 30*time.Second && pnlPct > 0 {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("time-based exit (30s, in profit)")
-		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "time-exit")
+		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "time-exit")
+		e.recordExit(order, entry, symbol, "time-exit")
 		e.mu.Lock()
 		e.entryPrice[symbol] = 0
 		e.highWater[symbol] = 0
@@ -690,7 +697,8 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 
 	if pnlPct >= e.cfg.Risk.TakeProfitTargetPct {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("full take-profit triggered")
-		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "take-profit-full")
+		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "take-profit-full")
+		e.recordExit(order, entry, symbol, "take-profit-full")
 		e.mu.Lock()
 		e.entryPrice[symbol] = 0
 		e.highWater[symbol] = 0
@@ -702,7 +710,8 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		amount := baseHeld * 0.5
 		if amount > 0.00001 {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("partial take-profit (50%)")
-			e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "take-profit-50")
+			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "take-profit-50")
+			e.recordExit(order, entry, symbol, "take-profit-50")
 			e.entryPrice[symbol] = entry
 		}
 	}
@@ -721,7 +730,8 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 			e.alerts.Send(alert.LevelWarn, "Trailing Stop Triggered",
 				fmt.Sprintf("%s: locked profit, closing at $%.2f", symbol, ticker.Last))
 
-			e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "trailing-stop")
+			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "trailing-stop")
+			e.recordExit(order, entry, symbol, "trailing-stop")
 			e.mu.Lock()
 			e.entryPrice[symbol] = 0
 			e.highWater[symbol] = 0
@@ -853,4 +863,18 @@ func (e *Engine) forwardOrderBook(ob *types.OrderBook) {
 	if setter, ok := e.exchange.(orderBookSetter); ok {
 		setter.SetOrderBook(ob)
 	}
+}
+
+func (e *Engine) recordExit(order *types.Order, entry float64, symbol, strat string) {
+	if order == nil || order.Status != types.StatusFilled {
+		return
+	}
+	pnl := (order.AvgPrice - entry) * order.Filled
+	e.logger.Info().Float64("pnl", pnl).Str("symbol", symbol).Str("strategy", strat).Msg("exit trade P&L")
+	e.db.RecordTrade(order, pnl)
+	e.riskMgr.RecordTrade(pnl)
+	e.mu.Lock()
+	e.tradeCount++
+	e.stratPnL[strat] += pnl
+	e.mu.Unlock()
 }
