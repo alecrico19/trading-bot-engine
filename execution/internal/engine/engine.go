@@ -197,6 +197,9 @@ func (e *Engine) runOrderBookLoop(ctx context.Context, wg *sync.WaitGroup, symbo
 			state.OrderBook = ob
 
 			for _, strat := range e.strategies {
+				if strat.Name() == "tick-momentum" {
+					continue
+				}
 				if !e.isStrategyForSymbol(strat.Name(), symbol) {
 					continue
 				}
@@ -335,7 +338,9 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 				state := e.buildMarketState(symbol)
 				ticker, _ := e.marketData.FetchTicker(ctx, symbol)
 				state.Ticker = ticker
-				_ = trade
+				if tms, ok := strat.(*TickMomentumStrategy); ok {
+					tms.FeedTrade(trade)
+				}
 				decision := strat.Evaluate(state)
 				if decision != nil {
 					select {
