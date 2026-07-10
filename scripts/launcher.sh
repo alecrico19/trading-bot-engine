@@ -67,7 +67,7 @@ fi
 echo -ne "${CYAN}Starting engine (paper mode + API)...${RESET} "
 cd "$PROJECT_DIR/execution"
 source ~/.bashrc 2>/dev/null
-go run cmd/main.go --paper --tui=false --api 8080 --config "$PROJECT_DIR/config/config.yaml" > "$LOG_DIR/engine.log" 2>&1 &
+go run cmd/main.go --paper --tui=false --api 8080 --public --config "$PROJECT_DIR/config/config.yaml" > "$LOG_DIR/engine.log" 2>&1 &
 ENGINE_PID=$!
 sleep 3
 

@@ -35,6 +35,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "debug logging")
 	useTUI := flag.Bool("tui", true, "launch terminal UI")
 	apiPort := flag.Int("api", 0, "HTTP API port (0 = disabled)")
+	public := flag.Bool("public", false, "bind API to all interfaces (for remote access)")
 	flag.Parse()
 
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("service", "execution").Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
@@ -125,6 +126,10 @@ func main() {
 		server := httpapi.NewServer(eng)
 		go func() {
 			addr := fmt.Sprintf("127.0.0.1:%d", *apiPort)
+			if *public {
+				addr = fmt.Sprintf("0.0.0.0:%d", *apiPort)
+				logger.Warn().Str("addr", addr).Msg("API bound to all interfaces — ensure firewall or Tailscale")
+			}
 			logger.Info().Str("addr", addr).Msg("HTTP API started")
 			if err := http.ListenAndServe(addr, server.Handler()); err != nil && err != http.ErrServerClosed {
 				logger.Error().Err(err).Msg("HTTP API error")
