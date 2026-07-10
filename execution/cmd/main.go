@@ -124,7 +124,7 @@ func main() {
 	if *apiPort > 0 {
 		server := httpapi.NewServer(eng)
 		go func() {
-			addr := fmt.Sprintf(":%d", *apiPort)
+			addr := fmt.Sprintf("127.0.0.1:%d", *apiPort)
 			logger.Info().Str("addr", addr).Msg("HTTP API started")
 			if err := http.ListenAndServe(addr, server.Handler()); err != nil && err != http.ErrServerClosed {
 				logger.Error().Err(err).Msg("HTTP API error")
@@ -157,8 +157,8 @@ func main() {
 		<-ctx.Done()
 	}
 
-	signalCon.Close()
 	<-engineDone
+	signalCon.Close()
 	store.Close()
 	logger.Info().Msg("engine stopped")
 }

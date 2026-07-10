@@ -321,8 +321,7 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		return
 	}
 
-	balances, _ := e.exchange.FetchBalance(ctx)
-	equity := calculateEquity(balances)
+	equity := e.GetEquity()
 
 	switch decision.Action {
 	case types.ActionBuy, types.ActionSell:
@@ -370,13 +369,14 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		}
 		e.db.RecordTrade(order, pnl)
 		e.riskMgr.RecordTrade(pnl)
-		e.tradeCount++
 
 		e.mu.Lock()
+		e.tradeCount++
 		e.stratPnL[decision.Strategy] += pnl
 		if order.Side == types.SideBuy {
 			e.entryPrice[decision.Symbol] = order.AvgPrice
-		} else {
+			e.highWater[decision.Symbol] = order.AvgPrice
+		} else if order.Filled >= order.Amount*0.99 {
 			e.entryPrice[decision.Symbol] = 0
 			e.highWater[decision.Symbol] = 0
 		}

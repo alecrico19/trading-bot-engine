@@ -29,12 +29,17 @@ if not TELEGRAM_TOKEN:
     logger.fatal("TELEGRAM_TOKEN not set")
     sys.exit(1)
 
-authorized = set(AUTHORIZED_USERS.split(",")) if AUTHORIZED_USERS else None
+authorized = {x.strip() for x in AUTHORIZED_USERS.split(",") if x.strip()}
+
+if not authorized:
+    logger.warning("AUTHORIZED_USERS not set — bot will reject all commands until configured")
 
 
 def is_authorized(update: Update) -> bool:
-    if authorized is None:
-        return True
+    if not authorized:
+        logger.warning("unauthorized access from user %s (%s)",
+                       update.effective_user.id, update.effective_user.username)
+        return False
     return str(update.effective_user.id) in authorized
 
 

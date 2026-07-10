@@ -72,7 +72,7 @@ func (m *Manager) CancelOrder(ctx context.Context, symbol, orderID string) error
 	if !ok {
 		return m.exchange.CancelOrder(ctx, symbol, orderID)
 	}
-	return m.exchange.CancelOrder(ctx, order.ExchangeID, symbol)
+		return m.exchange.CancelOrder(ctx, symbol, order.ExchangeID)
 }
 
 func (m *Manager) CancelAllOpen(ctx context.Context, symbol string) error {

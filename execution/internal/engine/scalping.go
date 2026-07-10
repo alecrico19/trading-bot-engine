@@ -54,7 +54,11 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	spread := (bestAsk - bestBid) / bestBid * 100
-	if spread > s.cfg.MinSpreadPct*100 {
+	maxSpread := s.cfg.MinSpreadPct
+	if maxSpread <= 0 {
+		maxSpread = 0.10
+	}
+	if spread > maxSpread*100 {
 		return nil
 	}
 
@@ -66,6 +70,20 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	if signal != nil && signal.IsActionable() {
 		signalID = signal.ID
 		confidence = signal.Confidence
+	}
+
+	if ratio > 3.0 {
+		return &types.Decision{
+			Action:   types.ActionBuy,
+			Symbol:   state.Symbol,
+			Side:     types.SideBuy,
+			Amount:   0,
+			Price:    bestAsk,
+			Type:     types.TypeLimit,
+			Reason:   "strong order book imbalance: heavy bid volume",
+			SignalID: signalID,
+			Strategy: s.Name(),
+		}
 	}
 
 	if ratio > 1.5 {
@@ -86,15 +104,15 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		}
 	}
 
-	if ratio > 3.0 {
+	if ratio < 0.33 {
 		return &types.Decision{
-			Action:   types.ActionBuy,
+			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
-			Side:     types.SideBuy,
+			Side:     types.SideSell,
 			Amount:   0,
-			Price:    bestAsk,
+			Price:    bestBid,
 			Type:     types.TypeLimit,
-			Reason:   "strong order book imbalance: heavy bid volume",
+			Reason:   "strong order book imbalance: heavy ask volume",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
@@ -113,20 +131,6 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 			Price:    bestBid,
 			Type:     types.TypeLimit,
 			Reason:   "order book imbalance: heavy ask volume",
-			SignalID: signalID,
-			Strategy: s.Name(),
-		}
-	}
-
-	if ratio < 0.33 {
-		return &types.Decision{
-			Action:   types.ActionSell,
-			Symbol:   state.Symbol,
-			Side:     types.SideSell,
-			Amount:   0,
-			Price:    bestBid,
-			Type:     types.TypeLimit,
-			Reason:   "strong order book imbalance: heavy ask volume",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}

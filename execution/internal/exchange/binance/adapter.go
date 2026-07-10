@@ -134,6 +134,8 @@ func (a *Adapter) CreateOrder(ctx context.Context, symbol string, side types.Ord
 		binanceSide = binance.SideTypeBuy
 	case types.SideSell:
 		binanceSide = binance.SideTypeSell
+	default:
+		return nil, fmt.Errorf("invalid side: %s", side)
 	}
 
 	var result *binance.CreateOrderResponse
@@ -158,6 +160,8 @@ func (a *Adapter) CreateOrder(ctx context.Context, symbol string, side types.Ord
 			Type(binanceType).
 			Quantity(fmt.Sprintf("%.8f", amount)).
 			Do(ctx)
+	default:
+		return nil, fmt.Errorf("unsupported order type: %s", orderType)
 	}
 
 	if err != nil {
@@ -283,16 +287,21 @@ func (a *Adapter) SubscribeOrderBook(ctx context.Context, symbol string) (<-chan
 		}
 	}
 
-	_, stop, err := binance.WsDepthServe100Ms(symbolLower, depthHandler, errHandler)
+	done, stop, err := binance.WsDepthServe100Ms(symbolLower, depthHandler, errHandler)
 	if err != nil {
 		close(ch)
 		return nil, fmt.Errorf("subscribe order book: %w", err)
 	}
 
 	go func() {
-		<-ctx.Done()
-		stop <- struct{}{}
-		close(ch)
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		select {
+		case stop <- struct{}{}:
+		default:
+		}
 	}()
 
 	return ch, nil
@@ -319,16 +328,21 @@ func (a *Adapter) SubscribeTrades(ctx context.Context, symbol string) (<-chan *t
 		}
 	}
 
-	_, stop, err := binance.WsAggTradeServe(symbolLower, tradeHandler, errHandler)
+	done, stop, err := binance.WsAggTradeServe(symbolLower, tradeHandler, errHandler)
 	if err != nil {
 		close(ch)
 		return nil, fmt.Errorf("subscribe trades: %w", err)
 	}
 
 	go func() {
-		<-ctx.Done()
-		stop <- struct{}{}
-		close(ch)
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		select {
+		case stop <- struct{}{}:
+		default:
+		}
 	}()
 
 	return ch, nil
@@ -369,7 +383,7 @@ func (a *Adapter) SubscribeAccount(ctx context.Context) (<-chan *types.Order, er
 		}
 	}
 
-	_, stop, err := binance.WsUserDataServe(listenKey, execHandler, errHandler)
+	done, stop, err := binance.WsUserDataServe(listenKey, execHandler, errHandler)
 	if err != nil {
 		close(ch)
 		return nil, fmt.Errorf("subscribe user data: %w", err)
@@ -381,8 +395,10 @@ func (a *Adapter) SubscribeAccount(ctx context.Context) (<-chan *types.Order, er
 		for {
 			select {
 			case <-ctx.Done():
-				stop <- struct{}{}
-				close(ch)
+				select { case stop <- struct{}{}: default: }
+				return
+			case <-done:
+				select { case stop <- struct{}{}: default: }
 				return
 			case <-ticker.C:
 				a.client.NewKeepaliveUserStreamService().ListenKey(listenKey).Do(ctx)

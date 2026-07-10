@@ -115,6 +115,9 @@ type Signal struct {
 }
 
 func (s *Signal) IsExpired() bool {
+	if s.TTLSeconds <= 0 {
+		return false
+	}
 	return time.Since(s.Timestamp).Seconds() > float64(s.TTLSeconds)
 }
 

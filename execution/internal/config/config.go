@@ -78,14 +78,8 @@ func Load(path string) (*Config, error) {
 	}
 
 	for name, ex := range cfg.Exchanges {
-		if strings.HasPrefix(ex.APIKey, "$") {
-			envKey := strings.TrimPrefix(strings.TrimPrefix(ex.APIKey, "${"), "}")
-			ex.APIKey = os.Getenv(envKey)
-		}
-		if strings.HasPrefix(ex.APISecret, "$") {
-			envKey := strings.TrimPrefix(strings.TrimPrefix(ex.APISecret, "${"), "}")
-			ex.APISecret = os.Getenv(envKey)
-		}
+		ex.APIKey = resolveEnv(ex.APIKey)
+		ex.APISecret = resolveEnv(ex.APISecret)
 		cfg.Exchanges[name] = ex
 	}
 
@@ -161,4 +155,14 @@ func (c *Config) ValidateLive() error {
 		}
 	}
 	return nil
+}
+
+func resolveEnv(s string) string {
+	if !strings.HasPrefix(s, "$") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "${")
+	s = strings.TrimPrefix(s, "$")
+	s = strings.TrimSuffix(s, "}")
+	return os.Getenv(s)
 }
