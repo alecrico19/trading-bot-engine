@@ -371,6 +371,14 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 				pnl = (order.AvgPrice - entry) * order.Filled
 			}
 		}
+		e.logger.Info().
+			Str("symbol", decision.Symbol).
+			Str("side", string(order.Side)).
+			Float64("entry", func() float64 { e.mu.RLock(); defer e.mu.RUnlock(); return e.entryPrice[decision.Symbol] }()).
+			Float64("avg_price", order.AvgPrice).
+			Float64("filled", order.Filled).
+			Float64("pnl", pnl).
+			Msg("trade P&L")
 		e.db.RecordTrade(order, pnl)
 		e.riskMgr.RecordTrade(pnl)
 
@@ -378,11 +386,19 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		e.tradeCount++
 		e.stratPnL[decision.Strategy] += pnl
 		if order.Side == types.SideBuy {
-			e.entryPrice[decision.Symbol] = order.AvgPrice
+			prev := e.entryPrice[decision.Symbol]
+			if prev > 0 {
+				e.entryPrice[decision.Symbol] = (prev + order.AvgPrice) / 2
+			} else {
+				e.entryPrice[decision.Symbol] = order.AvgPrice
+			}
 			e.highWater[decision.Symbol] = order.AvgPrice
-		} else if order.Filled >= order.Amount*0.99 {
-			e.entryPrice[decision.Symbol] = 0
-			e.highWater[decision.Symbol] = 0
+		} else {
+			pos, _ := e.orderMgr.GetPosition(decision.Symbol)
+			if pos == nil || abs(pos.Amount) < 0.00001 {
+				e.entryPrice[decision.Symbol] = 0
+				e.highWater[decision.Symbol] = 0
+			}
 		}
 		e.mu.Unlock()
 
