@@ -74,6 +74,15 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	midPrice := (bestBid + bestAsk) / 2
 	s.prices.Add(midPrice)
 
+	hasPosition := false
+	entryCount := 0
+	for _, p := range state.Positions {
+		if p.Symbol == state.Symbol && abs(p.Amount) > 0.00001 {
+			hasPosition = true
+			entryCount++
+		}
+	}
+
 	signal := s.getSignal(state)
 	signalID := ""
 	confidence := 0.0
@@ -83,6 +92,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 2.0 {
+		if entryCount >= 3 {
+			return nil
+		}
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
@@ -97,6 +109,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio > 1.2 {
+		if entryCount >= 3 {
+			return nil
+		}
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp long signal overridden by research short bias")
 			return nil
@@ -115,6 +130,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.5 {
+		if !hasPosition {
+			return nil
+		}
 		return &types.Decision{
 			Action:   types.ActionSell,
 			Symbol:   state.Symbol,
@@ -129,6 +147,9 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	if ratio < 0.83 {
+		if !hasPosition {
+			return nil
+		}
 		if signal != nil && signal.Direction == types.SignalDirectionLong {
 			s.logger.Debug().Float64("ratio", ratio).Msg("scalp short signal overridden by research long bias")
 			return nil
