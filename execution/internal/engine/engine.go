@@ -197,7 +197,7 @@ func (e *Engine) runOrderBookLoop(ctx context.Context, wg *sync.WaitGroup, symbo
 			state.OrderBook = ob
 
 			for _, strat := range e.strategies {
-				if strat.Name() == "tick-momentum" {
+				if strat.Name() == "tick-momentum" || strat.Name() == "scalping" {
 					continue
 				}
 				if !e.isStrategyForSymbol(strat.Name(), symbol) {
@@ -326,7 +326,10 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 				return
 			}
 			for _, strat := range e.strategies {
-				if strat.Name() != "tick-momentum" || !e.isStrategyForSymbol("tick-momentum", symbol) {
+				if strat.Name() != "tick-momentum" && strat.Name() != "scalping" {
+					continue
+				}
+				if !e.isStrategyForSymbol(strat.Name(), symbol) {
 					continue
 				}
 				e.mu.RLock()
@@ -340,6 +343,9 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 				state.Ticker = ticker
 				if tms, ok := strat.(*TickMomentumStrategy); ok {
 					tms.FeedTrade(trade)
+				}
+				if sps, ok := strat.(*ScalpingStrategy); ok {
+					sps.FeedTrade(trade)
 				}
 				decision := strat.Evaluate(state)
 				if decision != nil {

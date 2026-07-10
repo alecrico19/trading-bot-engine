@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"github.com/rs/zerolog"
 
 	"trading-bot/execution/internal/config"
@@ -8,170 +10,177 @@ import (
 )
 
 type ScalpingStrategy struct {
-	cfg    config.StrategyConfig
-	logger zerolog.Logger
-	prices *PriceHistory
+	cfg          config.StrategyConfig
+	logger       zerolog.Logger
+	prices       map[string]*PriceHistory
+	lastSide     map[string]string
+	lastDecision map[string]time.Time
 }
 
 func NewScalpingStrategy(cfg config.StrategyConfig, logger zerolog.Logger) *ScalpingStrategy {
-	emaPeriod := cfg.RSIPeriod
-	if emaPeriod == 0 {
-		emaPeriod = 200
-	}
 	return &ScalpingStrategy{
-		cfg:    cfg,
-		logger: logger.With().Str("strategy", "scalping").Logger(),
-		prices: NewPriceHistory(emaPeriod * 2),
+		cfg:          cfg,
+		logger:       logger.With().Str("strategy", "scalping").Logger(),
+		prices:       make(map[string]*PriceHistory),
+		lastSide:     make(map[string]string),
+		lastDecision: make(map[string]time.Time),
 	}
 }
 
 func (s *ScalpingStrategy) Name() string { return "scalping" }
 
+func (s *ScalpingStrategy) FeedTrade(trade *types.Trade) {
+	hist, ok := s.prices[trade.Symbol]
+	if !ok {
+		hist = NewPriceHistory(50)
+		s.prices[trade.Symbol] = hist
+	}
+	hist.Add(trade.Price)
+}
+
 func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
-	if state.OrderBook == nil || len(state.OrderBook.Bids) == 0 || len(state.OrderBook.Asks) == 0 {
+	hist, ok := s.prices[state.Symbol]
+	if !ok || hist.Len() < 10 {
 		return nil
 	}
 
-	depth := s.cfg.OrderBookDepth
-	if depth == 0 {
-		depth = 10
-	}
-	if len(state.OrderBook.Bids) < depth || len(state.OrderBook.Asks) < depth {
+	if time.Since(s.lastDecision[state.Symbol]) < time.Second {
 		return nil
 	}
 
-	bidVolume := 0.0
-	for i := 0; i < depth; i++ {
-		bidVolume += state.OrderBook.Bids[i].Quantity
-	}
-	askVolume := 0.0
-	for i := 0; i < depth; i++ {
-		askVolume += state.OrderBook.Asks[i].Quantity
+	window := s.cfg.OrderBookDepth
+	if window == 0 {
+		window = 5
 	}
 
-	if bidVolume == 0 || askVolume == 0 {
+	vals := hist.Values()
+	if len(vals) < window {
 		return nil
 	}
+	recent := vals[len(vals)-window:]
 
-	bestBid := state.OrderBook.Bids[0].Price
-	bestAsk := state.OrderBook.Asks[0].Price
-	if bestBid <= 0 || bestAsk <= 0 {
+	upCount := 0
+	downCount := 0
+	for i := 1; i < len(recent); i++ {
+		if recent[i] > recent[i-1] {
+			upCount++
+		}
+		if recent[i] < recent[i-1] {
+			downCount++
+		}
+	}
+	total := upCount + downCount
+	if total == 0 {
 		return nil
 	}
-
-	spread := (bestAsk - bestBid) / bestBid * 100
-	maxSpread := s.cfg.MinSpreadPct
-	if maxSpread <= 0 {
-		maxSpread = 0.10
-	}
-	if spread > maxSpread*100 {
-		return nil
-	}
-
-	ratio := bidVolume / askVolume
-
-	// Update trend tracker (EMA on mid-price for informational use)
-	midPrice := (bestBid + bestAsk) / 2
-	s.prices.Add(midPrice)
 
 	hasPosition := false
 	entryCount := 0
+	var holding float64
 	for _, p := range state.Positions {
 		if p.Symbol == state.Symbol && abs(p.Amount) > 0.00001 {
 			hasPosition = true
 			entryCount++
+			holding += abs(p.Amount)
 		}
 	}
+
+	ticker := state.Ticker
+	if ticker == nil || ticker.Last <= 0 {
+		return nil
+	}
+
+	upPct := float64(upCount) / float64(total)
+	lastSide, _ := s.lastSide[state.Symbol]
 
 	signal := s.getSignal(state)
 	signalID := ""
-	confidence := 0.0
 	if signal != nil && signal.IsActionable() {
 		signalID = signal.ID
-		confidence = signal.Confidence
 	}
 
-	if ratio > 1.5 {
-		if !hasPosition {
-			return nil
-		}
-		return &types.Decision{
-			Action:   types.ActionSell,
-			Symbol:   state.Symbol,
-			Side:     types.SideSell,
-			Amount:   0,
-			Price:    bestAsk,
-			Type:     types.TypeLimit,
-			Reason:   "sell into strength: heavy bid volume",
-			SignalID: signalID,
-			Strategy: s.Name(),
-		}
-	}
-
-	if ratio > 1.05 {
-		if !hasPosition {
-			return nil
-		}
-		if signal != nil && signal.Direction == types.SignalDirectionShort {
-			s.logger.Debug().Float64("ratio", ratio).Msg("sell signal overridden by research short bias")
-			return nil
-		}
-		return &types.Decision{
-			Action:   types.ActionSell,
-			Symbol:   state.Symbol,
-			Side:     types.SideSell,
-			Amount:   0,
-			Price:    bestAsk,
-			Type:     types.TypeLimit,
-			Reason:   "sell into strength: heavy bid volume",
-			SignalID: signalID,
-			Strategy: s.Name(),
-		}
-	}
-
-	if ratio < 0.8 {
-		if entryCount >= 10 {
-			return nil
-		}
+	// Strong buying momentum + no position → enter long
+	if upPct >= 0.80 && !hasPosition && entryCount < 10 {
+		s.lastSide[state.Symbol] = "buy"
+		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
 			Side:     types.SideBuy,
 			Amount:   0,
-			Price:    bestBid,
+			Price:    ticker.Last,
 			Type:     types.TypeLimit,
-			Reason:   "buy into weakness: heavy ask volume",
+			Reason:   "scalp: strong uptick momentum",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
 	}
 
-	if ratio < 0.95 {
-		if entryCount >= 10 {
-			return nil
-		}
-		if signal != nil && signal.Direction == types.SignalDirectionLong {
-			s.logger.Debug().Float64("ratio", ratio).Msg("buy signal overridden by research long bias")
-			return nil
-		}
+	// Buy signal (momentum is up) + no position
+	if upPct >= 0.60 && !hasPosition && entryCount < 10 {
+		s.lastSide[state.Symbol] = "buy"
+		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
 			Action:   types.ActionBuy,
 			Symbol:   state.Symbol,
 			Side:     types.SideBuy,
 			Amount:   0,
-			Price:    bestBid,
+			Price:    ticker.Last,
 			Type:     types.TypeLimit,
-			Reason:   "buy into weakness: heavy ask volume",
+			Reason:   "scalp: uptick momentum",
 			SignalID: signalID,
 			Strategy: s.Name(),
 		}
 	}
 
-	if confidence > 0.7 && signal != nil && signal.Type == types.SignalTypeAlert {
+	// Strong selling momentum + position held → exit
+	if upPct <= 0.20 && hasPosition {
+		s.lastSide[state.Symbol] = "sell"
+		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
-			Action: types.ActionReduce,
-			Symbol: state.Symbol,
-			Reason: "alert signal: risk reduction",
+			Action:   types.ActionSell,
+			Symbol:   state.Symbol,
+			Side:     types.SideSell,
+			Amount:   holding,
+			Price:    ticker.Last,
+			Type:     types.TypeLimit,
+			Reason:   "scalp: strong downtick momentum (exit)",
+			SignalID: signalID,
+			Strategy: s.Name(),
+		}
+	}
+
+	// Selling momentum + position held → exit
+	if upPct <= 0.40 && hasPosition {
+		s.lastSide[state.Symbol] = "sell"
+		s.lastDecision[state.Symbol] = time.Now()
+		return &types.Decision{
+			Action:   types.ActionSell,
+			Symbol:   state.Symbol,
+			Side:     types.SideSell,
+			Amount:   holding,
+			Price:    ticker.Last,
+			Type:     types.TypeLimit,
+			Reason:   "scalp: downtick momentum (exit)",
+			SignalID: signalID,
+			Strategy: s.Name(),
+		}
+	}
+
+	// Reversal from previous buy
+	if lastSide == "buy" && upPct <= 0.5 && hasPosition {
+		s.lastSide[state.Symbol] = "sell"
+		s.lastDecision[state.Symbol] = time.Now()
+		return &types.Decision{
+			Action:   types.ActionSell,
+			Symbol:   state.Symbol,
+			Side:     types.SideSell,
+			Amount:   holding,
+			Price:    ticker.Last,
+			Type:     types.TypeLimit,
+			Reason:   "scalp: momentum reverse (exit)",
+			SignalID: signalID,
+			Strategy: s.Name(),
 		}
 	}
 
@@ -185,17 +194,4 @@ func (s *ScalpingStrategy) getSignal(state *types.MarketState) *types.Signal {
 		}
 	}
 	return nil
-}
-
-func (s *ScalpingStrategy) computeEMA(period int) float64 {
-	vals := s.prices.Values()
-	if len(vals) < period {
-		return 0
-	}
-	multiplier := 2.0 / float64(period+1)
-	ema := vals[0]
-	for _, v := range vals[1:] {
-		ema = (v-ema)*multiplier + ema
-	}
-	return ema
 }

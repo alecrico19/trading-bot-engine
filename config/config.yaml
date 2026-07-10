@@ -27,10 +27,9 @@ alerts:
 
 strategies:
   scalping:
-    enabled: false
+    enabled: true
     symbols: ["BTCUSDT", "ETHUSDT"]
-    order_book_depth: 10
-    min_spread_pct: 0.05
+    order_book_depth: 5
     position_size_usd: 100
 
   mean-reversion:
