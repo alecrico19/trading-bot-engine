@@ -41,6 +41,7 @@ type Engine struct {
 	tradeCount  int
 	highWater   map[string]float64
 	entryPrice  map[string]float64
+	entryTime   map[string]time.Time
 	equityHist  []EquityPoint
 
 	mu     sync.RWMutex
@@ -65,6 +66,7 @@ func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange,
 		stratPnL:    make(map[string]float64),
 		highWater:   make(map[string]float64),
 		entryPrice:  make(map[string]float64),
+		entryTime:   make(map[string]time.Time),
 	}
 }
 
@@ -391,6 +393,7 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 				e.entryPrice[decision.Symbol] = (prev + order.AvgPrice) / 2
 			} else {
 				e.entryPrice[decision.Symbol] = order.AvgPrice
+				e.entryTime[decision.Symbol] = time.Now()
 			}
 			e.highWater[decision.Symbol] = order.AvgPrice
 		} else {
@@ -398,6 +401,7 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 			if pos == nil || abs(pos.Amount) < 0.00001 {
 				e.entryPrice[decision.Symbol] = 0
 				e.highWater[decision.Symbol] = 0
+				e.entryTime[decision.Symbol] = time.Time{}
 			}
 		}
 		e.mu.Unlock()
@@ -666,6 +670,20 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		e.mu.Lock()
 		e.entryPrice[symbol] = 0
 		e.highWater[symbol] = 0
+		e.mu.Unlock()
+		return
+	}
+
+	e.mu.RLock()
+	scalpEntryTime := e.entryTime[symbol]
+	e.mu.RUnlock()
+	if !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 30*time.Second && pnlPct > 0 {
+		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("time-based exit (30s, in profit)")
+		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, 0, "time-exit")
+		e.mu.Lock()
+		e.entryPrice[symbol] = 0
+		e.highWater[symbol] = 0
+		e.entryTime[symbol] = time.Time{}
 		e.mu.Unlock()
 		return
 	}
