@@ -32,7 +32,10 @@ type Engine struct {
 	signals     []types.Signal
 	strategies  []Strategy
 	stratPaused map[string]bool
+	stratPnL    map[string]float64
 	tradeCount  int
+	highWater   map[string]float64
+	entryPrice  map[string]float64
 
 	mu     sync.RWMutex
 	running bool
@@ -53,6 +56,9 @@ func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange,
 		alerts:      alerts,
 		logger:      logger.With().Str("component", "engine").Logger(),
 		stratPaused: make(map[string]bool),
+		stratPnL:    make(map[string]float64),
+		highWater:   make(map[string]float64),
+		entryPrice:  make(map[string]float64),
 	}
 }
 
@@ -114,6 +120,9 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	wg.Add(1)
 	go e.runDecisionLoop(ctx, &wg, decisionCh)
+
+	wg.Add(1)
+	go e.runStopLoss(ctx, &wg, symbols)
 
 	wg.Add(1)
 	go e.runPnLSnapshot(ctx, &wg)
@@ -347,6 +356,16 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		e.riskMgr.RecordTrade(pnl)
 		e.tradeCount++
 
+		e.mu.Lock()
+		e.stratPnL[decision.Strategy] += pnl
+		if order.Side == types.SideBuy {
+			e.entryPrice[decision.Symbol] = order.AvgPrice
+		} else {
+			e.entryPrice[decision.Symbol] = 0
+			e.highWater[decision.Symbol] = 0
+		}
+		e.mu.Unlock()
+
 		e.logger.Info().
 			Str("strategy", decision.Strategy).
 			Str("reason", decision.Reason).
@@ -488,6 +507,11 @@ func (e *Engine) GetActiveSignals() []*types.Signal {
 	return e.signalCon.GetAllActive()
 }
 
+func (e *Engine) GetRecentTrades(limit int) []types.Order {
+	trades, _ := e.db.GetRecentTrades("", limit)
+	return trades
+}
+
 func (e *Engine) GetDailyStats() (float64, int, int) {
 	return e.riskMgr.DailyStats()
 }
@@ -498,6 +522,106 @@ func (e *Engine) GetStrategyNames() []string {
 		names[i] = s.Name()
 	}
 	return names
+}
+
+func (e *Engine) GetStrategyPnL() map[string]float64 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make(map[string]float64, len(e.stratPnL))
+	for k, v := range e.stratPnL {
+		out[k] = v
+	}
+	return out
+}
+
+func (e *Engine) runStopLoss(ctx context.Context, wg *sync.WaitGroup, symbols []string) {
+	defer wg.Done()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if e.riskMgr.IsBreached() {
+				continue
+			}
+			for _, symbol := range symbols {
+				e.checkStopLoss(ctx, symbol)
+			}
+		}
+	}
+}
+
+func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
+	holdings := e.GetHoldings()
+	var baseHeld float64
+	for _, h := range holdings {
+		if h.Asset == "USDT" || h.Asset == "USD" || h.Asset == "USDC" {
+			continue
+		}
+		base := h.Asset + "USDT"
+		if base != symbol {
+			continue
+		}
+		baseHeld = h.Free + h.Locked
+	}
+	if baseHeld <= 0.00001 {
+		return
+	}
+
+	ticker, err := e.marketData.FetchTicker(ctx, symbol)
+	if err != nil || ticker == nil || ticker.Last <= 0 {
+		return
+	}
+
+	e.mu.RLock()
+	entry := e.entryPrice[symbol]
+	high := e.highWater[symbol]
+	e.mu.RUnlock()
+
+	if entry <= 0 {
+		return
+	}
+
+	pnlPct := (ticker.Last - entry) / entry
+
+	if pnlPct <= -e.cfg.Risk.StopLossPct {
+		amount := baseHeld
+		e.logger.Warn().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("stop-loss triggered")
+		e.alerts.Send(alert.LevelWarn, "Stop-Loss Triggered",
+			fmt.Sprintf("%s: %.1f%% loss, closing at $%.2f", symbol, pnlPct*100, ticker.Last))
+
+		e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "stop-loss")
+		e.mu.Lock()
+		e.entryPrice[symbol] = 0
+		e.highWater[symbol] = 0
+		e.mu.Unlock()
+		return
+	}
+
+	if pnlPct >= e.cfg.Risk.TrailingStopActivatePct {
+		if ticker.Last > high {
+			e.mu.Lock()
+			e.highWater[symbol] = ticker.Last
+			e.mu.Unlock()
+			high = ticker.Last
+		}
+		trailPrice := high * (1 - e.cfg.Risk.TrailingStopDistancePct)
+		if ticker.Last <= trailPrice {
+			amount := baseHeld
+			e.logger.Warn().Float64("high", high).Float64("current", ticker.Last).Str("symbol", symbol).Msg("trailing stop triggered")
+			e.alerts.Send(alert.LevelWarn, "Trailing Stop Triggered",
+				fmt.Sprintf("%s: locked profit, closing at $%.2f", symbol, ticker.Last))
+
+			e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, 0, "trailing-stop")
+			e.mu.Lock()
+			e.entryPrice[symbol] = 0
+			e.highWater[symbol] = 0
+			e.mu.Unlock()
+		}
+	}
 }
 
 func (e *Engine) PauseAll() {

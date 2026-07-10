@@ -77,6 +77,11 @@
   #last-update { color: #7aa2f7; }
   .flash { animation: flash 0.3s ease; }
   @keyframes flash { 0% { background: #2a2a5a; } 100% { background: #1a1a2e; } }
+  .trade-header, .trade-row {
+    display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr 1fr;
+    padding: 3px 0; border-bottom: 1px solid #1a1a3e; font-size: 12px;
+  }
+  .trade-row:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -109,6 +114,12 @@
     <div id="positions-list" style="color:#565f89;">No open positions</div>
   </div>
 
+  <!-- Strategy P&L Card -->
+  <div class="card">
+    <h2>Strategy P&amp;L</h2>
+    <div id="strategy-pnl-list" style="color:#565f89;">—</div>
+  </div>
+
   <!-- Strategies Card -->
   <div class="card">
     <h2>Strategies</h2>
@@ -119,6 +130,17 @@
   <div class="card" id="alerts-card">
     <h2>Status</h2>
     <div id="alerts-content" style="color:#565f89;">—</div>
+  </div>
+</div>
+
+<!-- Trade History -->
+<div class="card" style="margin-top:16px;">
+  <h2>Trade History (<span id="trade-count">0</span>)</h2>
+  <div style="overflow-y:auto;max-height:240px;">
+    <div id="trade-table-header" class="trade-header" style="display:none;grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr 1fr;padding:4px 0;font-size:11px;color:#565f89;border-bottom:1px solid #2a2a4a;">
+      <span>TIME</span><span>SYMBOL</span><span>SIDE</span><span>PRICE</span><span>QTY</span><span>P&amp;L</span>
+    </div>
+    <div id="trade-list" style="font-size:12px;color:#565f89;">Loading...</div>
   </div>
 </div>
 
@@ -215,6 +237,20 @@ function updateUI(d) {
   });
   stratList.innerHTML = stratHtml || '<span style="color:#565f89;">—</span>';
 
+  // Strategy P&L
+  const stratPnl = d.strategy_pnl || {};
+  const pnlList = document.getElementById('strategy-pnl-list');
+  let pnlHtml = '';
+  Object.entries(stratPnl).forEach(([name, pnl]) => {
+    const cls = pnl >= 0 ? 'green' : 'red';
+    const sign = pnl >= 0 ? '+' : '';
+    pnlHtml += `<div class="stat">
+      <span>${name}</span>
+      <span class="${cls}">${sign}$${Math.abs(pnl).toFixed(2)}</span>
+    </div>`;
+  });
+  pnlList.innerHTML = pnlHtml || '<span style="color:#565f89;">No trades yet</span>';
+
   // Alerts / status
   const alerts = document.getElementById('alerts-content');
   if (d.breached) {
@@ -226,8 +262,45 @@ function updateUI(d) {
   }
 }
 
+async function fetchTrades() {
+  try {
+    const resp = await fetch(API + '/trades');
+    const trades = await resp.json();
+    const list = document.getElementById('trade-list');
+    const header = document.getElementById('trade-table-header');
+    document.getElementById('trade-count').textContent = trades.length;
+
+    if (!trades.length) {
+      list.innerHTML = '<span style="color:#565f89;">No trades executed yet</span>';
+      header.style.display = 'none';
+      return;
+    }
+    header.style.display = 'grid';
+    let html = '';
+    trades.slice(0, 20).forEach(t => {
+      const side = t.side === 'buy' ? '🟢 BUY' : '🔴 SELL';
+      const time = t.created_at ? new Date(t.created_at).toLocaleTimeString() : '';
+      const pnl = (t.pnl || 0);
+      const pnlColor = pnl >= 0 ? 'green' : 'red';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      const qty = (t.amount || t.filled || 0).toFixed(4);
+      html += `<div class="trade-row">
+        <span>${time}</span>
+        <span style="color:#ffd700;">${t.symbol}</span>
+        <span>${side}</span>
+        <span>$${(t.price || t.avg_price || 0).toFixed(2)}</span>
+        <span>${qty}</span>
+        <span class="${pnlColor}">${pnlSign}$${Math.abs(pnl).toFixed(2)}</span>
+      </div>`;
+    });
+    list.innerHTML = html;
+  } catch(e) {}
+}
+
 fetchData();
+fetchTrades();
 setInterval(fetchData, 1000);
+setInterval(fetchTrades, 5000);
 </script>
 </body>
 </html>

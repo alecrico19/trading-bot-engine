@@ -118,16 +118,23 @@ func (s *Store) GetDailyPnL(date string) (float64, int, int, error) {
 }
 
 func (s *Store) GetRecentTrades(symbol string, limit int) ([]types.Order, error) {
-	rows, err := s.db.Query(
-		`SELECT id, exchange, symbol, side, amount, price, fee, strategy, signal_id, pnl, created_at
-		 FROM trades WHERE symbol = ? ORDER BY created_at DESC LIMIT ?`, symbol, limit,
-	)
+	query := `SELECT id, exchange, symbol, side, amount, price, fee, strategy, signal_id, pnl, created_at
+		 FROM trades ORDER BY created_at DESC LIMIT ?`
+	var rows *sql.Rows
+	var err error
+	if symbol != "" {
+		query = `SELECT id, exchange, symbol, side, amount, price, fee, strategy, signal_id, pnl, created_at
+		 FROM trades WHERE symbol = ? ORDER BY created_at DESC LIMIT ?`
+		rows, err = s.db.Query(query, symbol, limit)
+	} else {
+		rows, err = s.db.Query(query, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var trades []types.Order
+	var trades []types.Order = make([]types.Order, 0)
 	for rows.Next() {
 		var o types.Order
 		var pnl float64

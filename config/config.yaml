@@ -12,6 +12,9 @@ risk:
   max_order_size_usd: 200
   min_order_size_usd: 10
   max_price_deviation_pct: 0.02
+  stop_loss_pct: 0.05
+  trailing_stop_activate_pct: 0.02
+  trailing_stop_distance_pct: 0.03
 
 live_trading: false
 

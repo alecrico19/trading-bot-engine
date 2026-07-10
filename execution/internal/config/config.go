@@ -22,6 +22,9 @@ type RiskConfig struct {
 	MaxOrderSizeUSD           float64 `mapstructure:"max_order_size_usd"`
 	MinOrderSizeUSD           float64 `mapstructure:"min_order_size_usd"`
 	MaxPriceDeviationPct      float64 `mapstructure:"max_price_deviation_pct"`
+	StopLossPct               float64 `mapstructure:"stop_loss_pct"`
+	TrailingStopActivatePct   float64 `mapstructure:"trailing_stop_activate_pct"`
+	TrailingStopDistancePct   float64 `mapstructure:"trailing_stop_distance_pct"`
 }
 
 type StrategyConfig struct {
@@ -111,6 +114,15 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Risk.MaxPriceDeviationPct == 0 {
 		c.Risk.MaxPriceDeviationPct = 0.02
+	}
+	if c.Risk.StopLossPct == 0 {
+		c.Risk.StopLossPct = 0.05
+	}
+	if c.Risk.TrailingStopActivatePct == 0 {
+		c.Risk.TrailingStopActivatePct = 0.02
+	}
+	if c.Risk.TrailingStopDistancePct == 0 {
+		c.Risk.TrailingStopDistancePct = 0.03
 	}
 	if c.Research.SignalMinConfidence == 0 {
 		c.Research.SignalMinConfidence = 0.6
