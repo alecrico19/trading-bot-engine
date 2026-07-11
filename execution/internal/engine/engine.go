@@ -730,6 +730,11 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("mini profit exit (0.05%)")
 			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "mini-profit")
 			e.recordExit(order, entry, symbol, "mini-profit")
+			e.mu.Lock()
+			e.entryPrice[symbol] = 0
+			e.entryTime[symbol] = time.Time{}
+			e.highWater[symbol] = 0
+			e.mu.Unlock()
 		}
 	}
 
