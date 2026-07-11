@@ -27,7 +27,7 @@ alerts:
 
 strategies:
   scalping:
-    enabled: true
+    enabled: false
     symbols: ["BTCUSDT", "ETHUSDT"]
     order_book_depth: 5
     position_size_usd: 100
