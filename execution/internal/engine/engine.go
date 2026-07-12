@@ -724,7 +724,7 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 
 	pnlPct := (ticker.Last - entry) / entry
 
-	if pnlPct >= 0.0005 {
+	if false && pnlPct >= 0.0005 {
 		amount := baseHeld * 0.5
 		if amount > 0.00001 {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("mini profit exit (0.05%)")
