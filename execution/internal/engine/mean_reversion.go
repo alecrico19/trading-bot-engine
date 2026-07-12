@@ -96,8 +96,10 @@ func (s *MeanReversionStrategy) Evaluate(state *types.MarketState) *types.Decisi
 		signalID = signal.ID
 	}
 
+	hasPosition := false
 	for _, p := range state.Positions {
 		if p.Symbol == state.Symbol && abs(p.Amount) > 0.00001 {
+			hasPosition = true
 			if p.Side == "long" && (rsi > rsiOverbought || ticker.Last > upper) {
 				return &types.Decision{
 					Action:   types.ActionSell,
@@ -128,7 +130,7 @@ func (s *MeanReversionStrategy) Evaluate(state *types.MarketState) *types.Decisi
 		}
 	}
 
-	if rsi < rsiOversold && ticker.Last <= lower {
+	if !hasPosition && rsi < rsiOversold && ticker.Last <= lower {
 		if signal != nil && signal.Direction == types.SignalDirectionShort {
 			return nil
 		}
@@ -145,7 +147,7 @@ func (s *MeanReversionStrategy) Evaluate(state *types.MarketState) *types.Decisi
 		}
 	}
 
-	if rsi > rsiOverbought && ticker.Last >= upper {
+	if !hasPosition && rsi > rsiOverbought && ticker.Last >= upper {
 		if signal != nil && signal.Direction == types.SignalDirectionLong {
 			return nil
 		}
