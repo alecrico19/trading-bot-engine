@@ -151,7 +151,7 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 		}
 	}
 
-	if upPct <= 0.40 && hasPosition {
+	if upPct <= 0.50 && hasPosition {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
