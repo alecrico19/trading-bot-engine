@@ -418,6 +418,13 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 			return
 		}
 
+		if decision.Side == types.SideSell && decision.Amount > 0 {
+			actualHeld := e.baseHeld(decision.Symbol)
+			if actualHeld > 0 && amount > actualHeld {
+				amount = actualHeld * 0.999
+			}
+		}
+
 		ticker, _ := e.marketData.FetchTicker(ctx, decision.Symbol)
 		if err := e.riskMgr.ValidateOrder(decision.Symbol, decision.Side, decision.Type, amount, decision.Price, ticker); err != nil {
 			e.logger.Warn().Err(err).Str("strategy", decision.Strategy).Msg("order validation failed")
@@ -568,6 +575,20 @@ func (e *Engine) GetHoldings() []types.Balance {
 		return nil
 	}
 	return balances
+}
+
+func (e *Engine) baseHeld(symbol string) float64 {
+	holdings := e.GetHoldings()
+	for _, h := range holdings {
+		if h.Asset == "USDT" || h.Asset == "USD" || h.Asset == "USDC" {
+			continue
+		}
+		base := h.Asset + "USDT"
+		if base == symbol || h.Asset+"USD" == symbol {
+			return h.Free + h.Locked
+		}
+	}
+	return 0
 }
 
 func (e *Engine) GetEquity() float64 {
