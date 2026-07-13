@@ -15,8 +15,8 @@ risk:
   stop_loss_pct: 0.005
   trailing_stop_activate_pct: 0.02
   trailing_stop_distance_pct: 0.03
-  take_profit_1r_pct: 0.01
-  take_profit_target_pct: 0.02
+  take_profit_1r_pct: 0.0015
+  take_profit_target_pct: 0.003
 
 live_trading: false
 
