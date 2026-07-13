@@ -44,7 +44,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		return nil
 	}
 
-	if time.Since(s.lastDecision[state.Symbol]) < time.Second {
+	if time.Since(s.lastDecision[state.Symbol]) < 2*time.Second {
 		return nil
 	}
 
