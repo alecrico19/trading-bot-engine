@@ -18,12 +18,12 @@ case "${1:-run}" in
     ;;
 
   headless)
-    echo "Starting paper trading mode (headless + API on :8080)..."
+    echo "Starting paper trading mode (headless + API on :8420)..."
     cd "$PROJECT_DIR/execution"
     export GOROOT=/home/alecr/go
     export GOPATH=/home/alecr/go-tools
     export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
-    go run cmd/main.go --paper --tui=false --api 8080 --config "$PROJECT_DIR/config/config.yaml"
+    go run cmd/main.go --paper --tui=false --api 8420 --config "$PROJECT_DIR/config/config.yaml"
     ;;
 
   live)
@@ -75,7 +75,7 @@ case "${1:-run}" in
     fi
     cd "$PROJECT_DIR"
     export AUTHORIZED_USERS="${AUTHORIZED_USERS:-1473027968}"
-    export API_URL="${API_URL:-http://localhost:8080}"
+    export API_URL="${API_URL:-http://localhost:8420}"
     python3 telegram/bot.py
     ;;
 

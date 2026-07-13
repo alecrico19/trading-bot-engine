@@ -6,7 +6,7 @@
 ~/bin/tailscale --socket=$HOME/.tailscale/tailscaled.sock up
 ~/bin/tailscale --socket=$HOME/.tailscale/tailscaled.sock ip
 ```
-Visit the auth URL, log in. Once you have an IP (e.g., `100.x.x.x`), open `http://100.x.x.x:8080` on your phone. Also install Tailscale on your phone with the same account.
+Visit the auth URL, log in. Once you have an IP (e.g., `100.x.x.x`), open `http://100.x.x.x:8420` on your phone. Also install Tailscale on your phone with the same account.
 
 ## 2. Restart Launcher (2 min)
 The engine needs to pick up all audit fixes. Stop the current launcher (Ctrl+C), then:
@@ -18,7 +18,7 @@ The engine needs to pick up all audit fixes. Stop the current launcher (Ctrl+C),
 Let it run. Check periodically:
 - **Dashboard** — equity curve, positions, P&L
 - **Telegram** — `/status` from your phone
-- **Trade journal** — `curl http://localhost:8080/trades | python3 -m json.tool`
+- **Trade journal** — `curl http://localhost:8420/trades | python3 -m json.tool`
 - **Crash test** — does it survive 8 hours with no intervention?
 
 Expected behavior:

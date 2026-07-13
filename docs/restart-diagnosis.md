@@ -2,11 +2,11 @@
 
 ## Possible Causes
 
-1. **Old engine persists on port 8080** — the launcher's `fuser -k 8080/tcp` might fail silently. New `go run` can't bind, old engine keeps serving stale data from a previous binary.
+1. **Old engine persists on port 8420** — the launcher's `fuser -k 8420/tcp` might fail silently. New `go run` can't bind, old engine keeps serving stale data from a previous binary.
 
 2. **`go run` caches old build** — Go caches compiled binaries. If the source hash doesn't change (some edits don't change the hash), `go run` reuses the cached binary.
 
-3. **Launcher fails silently** — if `go run` exits with an error, the launcher continues but the old engine stays on 8080. User sees dashboard but it's the OLD engine.
+3. **Launcher fails silently** — if `go run` exits with an error, the launcher continues but the old engine stays on 8420. User sees dashboard but it's the OLD engine.
 
 4. **Same `trading.db` across restarts** — the `rm -f trading.db` was recently added. Earlier restarts re-used the same DB with old $0.00 P&L trades mixed in.
 

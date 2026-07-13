@@ -45,8 +45,8 @@
 
 ## Quick Links
 
-- **Live Dashboard:** `http://localhost:8080`
-- **API:** `http://localhost:8080/status`
+- **Live Dashboard:** `http://localhost:8420`
+- **API:** `http://localhost:8420/status`
 - **Source:** `~/trading-bot/`
 - **GitHub:** https://github.com/alecrico19/trading-bot-engine
 
@@ -58,7 +58,7 @@
 
 # Or individual services
 ./scripts/start.sh run       # TUI dashboard
-./scripts/start.sh headless  # Headless + API on :8080
+./scripts/start.sh headless  # Headless + API on :8420
 ./scripts/start.sh research  # Research service
 ./scripts/start.sh telegram  # Telegram bot
 ./scripts/start.sh backtest  # Backtest optimizer

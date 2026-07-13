@@ -24,4 +24,4 @@ done
 This gives the daemon up to 10 seconds to connect before showing "(needs auth)".
 
 ## Device already connected: YES
-Your phone (iPhone XS Max) is on the Tailscale network. Open `http://100.112.254.73:8080` in your phone browser to see the dashboard.
+Your phone (iPhone XS Max) is on the Tailscale network. Open `http://100.112.254.73:8420` in your phone browser to see the dashboard.

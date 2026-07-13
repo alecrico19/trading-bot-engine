@@ -50,7 +50,7 @@ echo ""
 
 # Clean stale ports from previous runs
 echo -ne "${CYAN}Cleaning stale ports...${RESET} "
-fuser -k 8080/tcp 2>/dev/null
+fuser -k 8420/tcp 2>/dev/null
 echo -e "${GREEN}done${RESET}"
 
 # Clean Go build cache for fresh compile
@@ -111,7 +111,7 @@ echo -ne "${CYAN}Starting engine (paper mode + API)...${RESET} "
 cd "$PROJECT_DIR/execution"
 source ~/.bashrc 2>/dev/null
 rm -f trading.db trading.db-wal trading.db-shm
-go run cmd/main.go --paper --tui=false --api 8080 --public --config "$PROJECT_DIR/config/config.yaml" > "$LOG_DIR/engine.log" 2>&1 &
+go run cmd/main.go --paper --tui=false --api 8420 --public --config "$PROJECT_DIR/config/config.yaml" > "$LOG_DIR/engine.log" 2>&1 &
 ENGINE_PID=$!
 sleep 3
 
@@ -139,7 +139,7 @@ TELEGRAM_PID=""
 if [ -n "$TELEGRAM_TOKEN" ]; then
     echo -ne "${CYAN}Starting Telegram bot...${RESET} "
     export AUTHORIZED_USERS="${AUTHORIZED_USERS:-1473027968}"
-    API_URL="http://localhost:8080" python3 telegram/bot.py > "$LOG_DIR/telegram.log" 2>&1 &
+    API_URL="http://localhost:8420" python3 telegram/bot.py > "$LOG_DIR/telegram.log" 2>&1 &
     TELEGRAM_PID=$!
     sleep 1
     if kill -0 $TELEGRAM_PID 2>/dev/null; then
@@ -153,9 +153,9 @@ fi
 
 echo ""
 echo -e "${BOLD}─────────────────────────────────────${RESET}"
-echo -e "${GREEN}Engine API:${RESET}    http://localhost:8080/status"
+echo -e "${GREEN}Engine API:${RESET}    http://localhost:8420/status"
 if [ -n "$TS_IP" ]; then
-    echo -e "${GREEN}Tailscale:${RESET}      http://$TS_IP:8080"
+    echo -e "${GREEN}Tailscale:${RESET}      http://$TS_IP:8420"
 fi
 echo -e "${GREEN}Logs:${RESET}         $LOG_DIR/"
 echo -e "${YELLOW}Press Ctrl+C to stop all services${RESET}"
@@ -164,7 +164,7 @@ echo ""
 
 # Show live status every 5 seconds
 while true; do
-    STATUS=$(curl -s http://localhost:8080/status 2>/dev/null)
+    STATUS=$(curl -s http://localhost:8420/status 2>/dev/null)
     if [ -n "$STATUS" ]; then
         TRADES=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('trades',0))" 2>/dev/null || echo "?")
         PNL=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('daily_pnl',0))" 2>/dev/null || echo "?")

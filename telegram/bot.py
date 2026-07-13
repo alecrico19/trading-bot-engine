@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("telegram")
 
-API_URL = os.environ.get("API_URL", "http://localhost:8080")
+API_URL = os.environ.get("API_URL", "http://localhost:8420")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 AUTHORIZED_USERS = os.environ.get("AUTHORIZED_USERS", "")
 

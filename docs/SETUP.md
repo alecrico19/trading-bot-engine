@@ -104,10 +104,10 @@ cd ~/trading-bot
 Test the API from a third terminal:
 
 ```bash
-curl http://localhost:8080/status | python3 -m json.tool
-curl http://localhost:8080/positions | python3 -m json.tool
-curl -X POST http://localhost:8080/pause
-curl -X POST http://localhost:8080/resume
+curl http://localhost:8420/status | python3 -m json.tool
+curl http://localhost:8420/positions | python3 -m json.tool
+curl -X POST http://localhost:8420/pause
+curl -X POST http://localhost:8420/resume
 ```
 
 ## Step 7: Set Up Telegram Bot (Optional)
@@ -119,7 +119,7 @@ curl -X POST http://localhost:8080/resume
 
 ```bash
 export TELEGRAM_TOKEN="your_bot_token"
-export API_URL="http://localhost:8080"
+export API_URL="http://localhost:8420"
 cd ~/trading-bot
 ./scripts/start.sh telegram
 ```
@@ -158,7 +158,7 @@ Progressively verify each layer works before trusting anything with real money:
 
 ### 9d. Kill switch (manual test)
 - [ ] Press `k` in TUI → breaker trips, orders cancelled, strategies paused
-- [ ] `curl -X POST http://localhost:8080/kill` → same effect from API
+- [ ] `curl -X POST http://localhost:8420/kill` → same effect from API
 - [ ] `/kill` from Telegram → same effect
 
 ### 9e. Resilience (overnight)
