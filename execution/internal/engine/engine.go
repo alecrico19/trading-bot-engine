@@ -42,6 +42,7 @@ type Engine struct {
 	highWater   map[string]float64
 	entryPrice  map[string]float64
 	entryTime   map[string]time.Time
+	lastTrade   map[string]float64
 	equityHist  []EquityPoint
 
 	mu     sync.RWMutex
@@ -67,6 +68,7 @@ func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange,
 		highWater:   make(map[string]float64),
 		entryPrice:  make(map[string]float64),
 		entryTime:   make(map[string]time.Time),
+		lastTrade:   make(map[string]float64),
 	}
 }
 
@@ -321,10 +323,13 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 		select {
 		case <-ctx.Done():
 			return
-		case trade, ok := <-tradeCh:
+		case 		trade, ok := <-tradeCh:
 			if !ok {
 				return
 			}
+			e.mu.Lock()
+			e.lastTrade[symbol] = trade.Price
+			e.mu.Unlock()
 			for _, strat := range e.strategies {
 				if strat.Name() != "tick-momentum" && strat.Name() != "scalping" {
 					continue
@@ -383,6 +388,17 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 	}
 
 	equity := e.GetEquity()
+
+	e.mu.RLock()
+	lastTradePrice := e.lastTrade[decision.Symbol]
+	e.mu.RUnlock()
+	if decision.Price > 0 && lastTradePrice > 0 {
+		deviation := abs(decision.Price-lastTradePrice) / lastTradePrice
+		if deviation > 0.05 {
+			e.logger.Warn().Float64("ticker", decision.Price).Float64("last_trade", lastTradePrice).Str("symbol", decision.Symbol).Msg("entry price anomaly, skipping")
+			return
+		}
+	}
 
 	switch decision.Action {
 	case types.ActionBuy, types.ActionSell:
