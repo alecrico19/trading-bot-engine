@@ -59,6 +59,27 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 	recent := vals[len(vals)-window:]
 
+	longTrend := "neutral"
+	if len(vals) >= 20 {
+		longRecent := vals[len(vals)-20:]
+		longUp := 0
+		longDown := 0
+		for i := 1; i < len(longRecent); i++ {
+			if longRecent[i] > longRecent[i-1] {
+				longUp++
+			}
+			if longRecent[i] < longRecent[i-1] {
+				longDown++
+			}
+		}
+		longTotal := longUp + longDown
+		if longTotal > 0 && float64(longUp)/float64(longTotal) >= 0.55 {
+			longTrend = "up"
+		} else if longTotal > 0 {
+			longTrend = "down"
+		}
+	}
+
 	upCount := 0
 	downCount := 0
 	for i := 1; i < len(recent); i++ {
@@ -100,7 +121,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Strong buying momentum + no position → enter long
-	if upPct >= 0.80 && !hasPosition && entryCount < 10 {
+	if upPct >= 0.80 && !hasPosition && entryCount < 10 && longTrend != "down" {
 		s.lastSide[state.Symbol] = "buy"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -117,7 +138,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Buy signal (momentum is up) + no position
-	if upPct >= 0.60 && !hasPosition && entryCount < 10 {
+	if upPct >= 0.60 && !hasPosition && entryCount < 10 && longTrend != "down" {
 		s.lastSide[state.Symbol] = "buy"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -134,7 +155,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Strong selling momentum + position held → exit
-	if upPct <= 0.20 && hasPosition && lastSide != "sell" {
+	if upPct <= 0.20 && hasPosition && lastSide != "sell" && longTrend != "up" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -151,7 +172,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Selling momentum + position held → exit
-	if upPct <= 0.40 && hasPosition && lastSide != "sell" {
+	if upPct <= 0.40 && hasPosition && lastSide != "sell" && longTrend != "up" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
