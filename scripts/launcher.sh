@@ -162,6 +162,17 @@ echo -e "${YELLOW}Press Ctrl+C to stop all services${RESET}"
 echo -e "${BOLD}─────────────────────────────────────${RESET}"
 echo ""
 
+# Wait for engine to come online (up to 30s)
+echo -ne "${CYAN}Waiting for engine to start..."
+for i in $(seq 1 15); do
+    if curl -s http://localhost:8420/status 2>/dev/null | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+        echo -e " ${GREEN}ready${RESET}"
+        break
+    fi
+    sleep 2
+done
+echo ""
+
 # Show live status every 5 seconds
 while true; do
     STATUS=$(curl -s http://localhost:8420/status 2>/dev/null)
