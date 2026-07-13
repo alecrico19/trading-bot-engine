@@ -110,7 +110,10 @@ fi
 echo -ne "${CYAN}Starting engine (paper mode + API)...${RESET} "
 cd "$PROJECT_DIR/execution"
 source ~/.bashrc 2>/dev/null
-rm -f trading.db trading.db-wal trading.db-shm
+mkdir -p "$PROJECT_DIR/backups" 2>/dev/null
+[ -f trading.db ] && mv trading.db "$PROJECT_DIR/backups/trading-$(date +%Y%m%d-%H%M).db" 2>/dev/null
+[ -f trading.db-wal ] && mv trading.db-wal "$PROJECT_DIR/backups/trading-$(date +%Y%m%d-%H%M)-wal.db" 2>/dev/null
+[ -f trading.db-shm ] && mv trading.db-shm "$PROJECT_DIR/backups/trading-$(date +%Y%m%d-%H%M)-shm.db" 2>/dev/null
 go run cmd/main.go --paper --tui=false --api 8420 --public --config "$PROJECT_DIR/config/config.yaml" > "$LOG_DIR/engine.log" 2>&1 &
 ENGINE_PID=$!
 sleep 3

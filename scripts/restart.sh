@@ -13,6 +13,7 @@ echo "=== Starting fresh ==="
 export PATH=$HOME/go/bin:$HOME/go-tools/bin:$PATH
 export GOROOT=$HOME/go
 go clean -cache 2>/dev/null
-rm -f $HOME/trading-bot/execution/trading.db*
+mkdir -p "$HOME/trading-bot/backups" 2>/dev/null
+[ -f "$HOME/trading-bot/execution/trading.db" ] && mv "$HOME/trading-bot/execution/trading.db" "$HOME/trading-bot/backups/trading-$(date +%Y%m%d-%H%M).db" 2>/dev/null
 
 exec $HOME/Desktop/start-trading-bot.sh
