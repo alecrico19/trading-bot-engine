@@ -27,7 +27,7 @@ alerts:
 
 strategies:
   scalping:
-    enabled: true
+    enabled: false
     symbols: ["BTCUSDT", "ETHUSDT"]
     order_book_depth: 5
     position_size_usd: 100
@@ -36,14 +36,14 @@ strategies:
     enabled: true
     symbols: ["BTCUSDT", "ETHUSDT"]
     rsi_period: 14
-    rsi_oversold: 30
-    rsi_overbought: 70
+    rsi_oversold: 35
+    rsi_overbought: 65
     bb_period: 20
-    bb_stddev: 2.0
+    bb_stddev: 1.5
     position_size_usd: 100
 
   tick-momentum:
-    enabled: true
+    enabled: false
     symbols: ["BTCUSDT", "ETHUSDT"]
     order_book_depth: 5
     position_size_usd: 100

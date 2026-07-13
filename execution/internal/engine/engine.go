@@ -761,7 +761,7 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 
 	pnlPct := (ticker.Last - entry) / entry
 
-	if high > entry && (high-ticker.Last)/high > 0.0002 {
+	if false && high > entry && (high-ticker.Last)/high > 0.0002 {
 		amount := baseHeld * 0.5
 		if amount > 0.00001 {
 			e.logger.Info().Float64("high", high).Float64("current", ticker.Last).Str("symbol", symbol).Msg("peak-drop exit (0.02% from high)")
