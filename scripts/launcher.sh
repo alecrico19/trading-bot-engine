@@ -53,6 +53,11 @@ echo -ne "${CYAN}Cleaning stale ports...${RESET} "
 fuser -k 8080/tcp 2>/dev/null
 echo -e "${GREEN}done${RESET}"
 
+# Clean Go build cache for fresh compile
+echo -ne "${CYAN}Cleaning Go cache...${RESET} "
+go clean -cache 2>/dev/null
+echo -e "${GREEN}done${RESET}"
+
 # Start Redis
 echo -ne "${CYAN}Starting Redis...${RESET} "
 if [ -x "$REDIS_CLI" ] && $REDIS_CLI ping &>/dev/null; then
