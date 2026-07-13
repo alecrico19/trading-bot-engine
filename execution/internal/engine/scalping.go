@@ -44,7 +44,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		return nil
 	}
 
-	if time.Since(s.lastDecision[state.Symbol]) < 2*time.Second {
+	if time.Since(s.lastDecision[state.Symbol]) < time.Second {
 		return nil
 	}
 
@@ -134,7 +134,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Strong selling momentum + position held → exit
-	if upPct <= 0.20 && hasPosition {
+	if upPct <= 0.20 && hasPosition && lastSide != "sell" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -151,7 +151,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Selling momentum + position held → exit
-	if upPct <= 0.40 && hasPosition {
+	if upPct <= 0.40 && hasPosition && lastSide != "sell" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -168,7 +168,7 @@ func (s *ScalpingStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 
 	// Reversal from previous buy
-	if lastSide == "buy" && upPct <= 0.5 && hasPosition {
+	if lastSide == "buy" && upPct <= 0.5 && hasPosition && lastSide != "sell" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
