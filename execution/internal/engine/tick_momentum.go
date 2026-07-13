@@ -106,6 +106,27 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 		return nil
 	}
 
+	longTrend := "neutral"
+	if len(vals) >= 50 {
+		longRecent := vals[len(vals)-50:]
+		longUp := 0
+		longDown := 0
+		for i := 1; i < len(longRecent); i++ {
+			if longRecent[i] > longRecent[i-1] {
+				longUp++
+			}
+			if longRecent[i] < longRecent[i-1] {
+				longDown++
+			}
+		}
+		longTotal := longUp + longDown
+		if longTotal > 0 && float64(longUp)/float64(longTotal) >= 0.55 {
+			longTrend = "up"
+		} else if longTotal > 0 {
+			longTrend = "down"
+		}
+	}
+
 	hasPosition := false
 	for _, p := range state.Positions {
 		if p.Symbol == state.Symbol && abs(p.Amount) > 0.00001 {
@@ -135,7 +156,7 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 		}
 	}
 
-	if upPct >= 0.55 && !hasPosition {
+	if upPct >= 0.55 && !hasPosition && longTrend != "down" {
 		s.lastSide[state.Symbol] = "buy"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
@@ -151,7 +172,7 @@ func (s *TickMomentumStrategy) Evaluate(state *types.MarketState) *types.Decisio
 		}
 	}
 
-	if upPct <= 0.45 && hasPosition {
+	if upPct <= 0.45 && hasPosition && longTrend != "up" {
 		s.lastSide[state.Symbol] = "sell"
 		s.lastDecision[state.Symbol] = time.Now()
 		return &types.Decision{
