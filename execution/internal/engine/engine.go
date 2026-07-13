@@ -831,7 +831,7 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("partial take-profit (50%)")
 			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "take-profit-50")
 			e.recordExit(order, entry, symbol, "take-profit-50")
-			e.entryPrice[symbol] = entry
+			e.entryPrice[symbol] = 0
 		}
 	}
 
