@@ -41,7 +41,9 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		maxPositions = 3
 	}
 
-	if time.Since(s.lastBuy[symbol]) < interval {
+	since := time.Since(s.lastBuy[symbol])
+	if since < interval {
+		s.logger.Debug().Str("symbol", symbol).Dur("since_last", since).Dur("interval", interval).Msg("grid: not time yet")
 		return nil
 	}
 
@@ -52,11 +54,13 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		}
 	}
 	if entryCount >= maxPositions {
+		s.logger.Debug().Str("symbol", symbol).Int("count", entryCount).Int("max", maxPositions).Msg("grid: position cap")
 		return nil
 	}
 
 	ticker := state.Ticker
 	if ticker == nil || ticker.Last <= 0 {
+		s.logger.Debug().Str("symbol", symbol).Msg("grid: no ticker")
 		return nil
 	}
 
