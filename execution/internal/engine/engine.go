@@ -60,8 +60,16 @@ type Engine struct {
 	dayStartEquity float64 // equity captured at the first tick of the day
 	dayHalted      bool    // true once the daily profit-lock or loss-stop has fired
 
-	mu     sync.RWMutex
+	priceSamples map[string][]pricePoint // rolling per-symbol prices for the crash guard
+
+	mu      sync.RWMutex
 	running bool
+}
+
+// pricePoint is a timestamped price sample used by the crash-guard regime filter.
+type pricePoint struct {
+	t     time.Time
+	price float64
 }
 
 func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange, om *order.Manager, rm *risk.Manager, sc *signal.Consumer, store *db.Store, alerts *alert.Service, logger zerolog.Logger) *Engine {
@@ -69,21 +77,22 @@ func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange,
 		marketData = ex
 	}
 	return &Engine{
-		cfg:         cfg,
-		exchange:    ex,
-		marketData:  marketData,
-		orderMgr:    om,
-		riskMgr:     rm,
-		signalCon:   sc,
-		db:          store,
-		alerts:      alerts,
-		logger:      logger.With().Str("component", "engine").Logger(),
-		stratPaused: make(map[string]bool),
-		stratPnL:    make(map[string]float64),
-		highWater:   make(map[string]float64),
-		entryPrice:  make(map[string]float64),
-		entryTime:   make(map[string]time.Time),
-		lastTrade:   make(map[string]float64),
+		cfg:          cfg,
+		exchange:     ex,
+		marketData:   marketData,
+		orderMgr:     om,
+		riskMgr:      rm,
+		signalCon:    sc,
+		db:           store,
+		alerts:       alerts,
+		logger:       logger.With().Str("component", "engine").Logger(),
+		stratPaused:  make(map[string]bool),
+		stratPnL:     make(map[string]float64),
+		highWater:    make(map[string]float64),
+		entryPrice:   make(map[string]float64),
+		entryTime:    make(map[string]time.Time),
+		lastTrade:    make(map[string]float64),
+		priceSamples: make(map[string][]pricePoint),
 	}
 }
 
@@ -151,6 +160,9 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	wg.Add(1)
 	go e.runStopLoss(ctx, &wg, symbols)
+
+	wg.Add(1)
+	go e.runRegimeSampler(ctx, &wg, symbols)
 
 	wg.Add(1)
 	go e.runEquityRecorder(ctx, &wg)
@@ -346,7 +358,7 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 		select {
 		case <-ctx.Done():
 			return
-		case 		trade, ok := <-tradeCh:
+		case trade, ok := <-tradeCh:
 			if !ok {
 				return
 			}
@@ -428,6 +440,20 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		if err := e.riskMgr.CanOpenPosition(decision.Symbol, equity, 0); err != nil {
 			e.logger.Debug().Err(err).Str("strategy", decision.Strategy).Msg("position blocked by risk")
 			return
+		}
+
+		// Crash guard: refuse new long entries while the market is in a sharp
+		// downtrend (buying a falling knife is the main way a green streak
+		// becomes one big red day). Exits (sells) are always allowed.
+		if decision.Side == types.SideBuy {
+			if guard, change := e.inCrashGuard(decision.Symbol, decision.Price); guard {
+				e.logger.Warn().
+					Str("symbol", decision.Symbol).
+					Float64("change_pct", change*100).
+					Str("strategy", decision.Strategy).
+					Msg("crash guard: blocking new buy during downtrend")
+				return
+			}
 		}
 
 		amount := decision.Amount
@@ -1108,6 +1134,84 @@ func (e *Engine) flattenAllPositions(ctx context.Context) {
 		e.entryTime[symbol] = time.Time{}
 		e.mu.Unlock()
 	}
+}
+
+// runRegimeSampler records a price sample for every traded symbol on a fixed cadence,
+// feeding the crash-guard rolling window.
+func (e *Engine) runRegimeSampler(ctx context.Context, wg *sync.WaitGroup, symbols []string) {
+	defer wg.Done()
+	if e.cfg.Risk.CrashGuardDropPct <= 0 {
+		return // crash guard disabled
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	sample := func() {
+		for _, symbol := range symbols {
+			t, err := e.marketData.FetchTicker(ctx, symbol)
+			if err == nil && t != nil && t.Last > 0 {
+				e.recordPriceSample(symbol, t.Last)
+			}
+		}
+	}
+	sample()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sample()
+		}
+	}
+}
+
+func (e *Engine) recordPriceSample(symbol string, price float64) {
+	if price <= 0 {
+		return
+	}
+	lookback := time.Duration(e.cfg.Risk.CrashGuardLookbackMin) * time.Minute
+	if lookback <= 0 {
+		lookback = 30 * time.Minute
+	}
+	cutoff := time.Now().Add(-lookback - time.Minute) // retain a little beyond the window
+
+	e.mu.Lock()
+	pts := append(e.priceSamples[symbol], pricePoint{t: time.Now(), price: price})
+	i := 0
+	for i < len(pts) && pts[i].t.Before(cutoff) {
+		i++
+	}
+	e.priceSamples[symbol] = pts[i:]
+	e.mu.Unlock()
+}
+
+// inCrashGuard reports whether currentPrice is down more than CrashGuardDropPct versus
+// the oldest retained sample (~one lookback window ago). It returns false until enough
+// history has accumulated, so it never blocks trading right after startup.
+func (e *Engine) inCrashGuard(symbol string, currentPrice float64) (bool, float64) {
+	dropPct := e.cfg.Risk.CrashGuardDropPct
+	if dropPct <= 0 || currentPrice <= 0 {
+		return false, 0
+	}
+	lookback := time.Duration(e.cfg.Risk.CrashGuardLookbackMin) * time.Minute
+	if lookback <= 0 {
+		lookback = 30 * time.Minute
+	}
+
+	e.mu.RLock()
+	pts := e.priceSamples[symbol]
+	e.mu.RUnlock()
+	if len(pts) < 2 {
+		return false, 0
+	}
+	oldest := pts[0]
+	if oldest.price <= 0 || time.Since(oldest.t) < lookback/2 {
+		return false, 0 // not enough history yet
+	}
+
+	change := (currentPrice - oldest.price) / oldest.price
+	return change <= -dropPct, change
 }
 
 func (e *Engine) saveDailySnapshot() {

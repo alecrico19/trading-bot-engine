@@ -28,6 +28,8 @@ type RiskConfig struct {
 	TrailingStopDistancePct   float64 `mapstructure:"trailing_stop_distance_pct"`
 	TakeProfit1RPct           float64 `mapstructure:"take_profit_1r_pct"`
 	TakeProfitTargetPct       float64 `mapstructure:"take_profit_target_pct"`
+	CrashGuardDropPct         float64 `mapstructure:"crash_guard_drop_pct"`
+	CrashGuardLookbackMin     int     `mapstructure:"crash_guard_lookback_min"`
 }
 
 type StrategyConfig struct {
