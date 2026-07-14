@@ -108,3 +108,9 @@ _(Appended as notable exits / crash guard / daily lock fire or the bot restarts.
   exit-fill bug above.
 - 2026-07-14 22:11 — Restarted on exit-fill-price-fix build (fresh DB, $1000).
   First grid leg: 0.000785 BTC @ $63,721.39. Watcher re-armed.
+- 2026-07-14 22:18 — ✅ FIX CONFIRMED. ETH ladder ran clean: scale-out sold 50% at
+  +0.56% ($1870.71, filled $1870.71, +$0.089), remainder ran to +1.04% and hit the full-TP
+  backstop ($1879.78, filled $1879.78, +$0.210). Fills now match trigger prices; both
+  tranches net-positive. Equity $1000.35, 2 wins. This is the scale-out-into-strength +
+  let-the-rest-run behaviour working as designed. Watcher narrowed back to crash-guard /
+  daily-lock only (exits now fire routinely — no need to notify per exit).
