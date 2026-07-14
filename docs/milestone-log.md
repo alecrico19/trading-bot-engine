@@ -82,10 +82,29 @@ never fired — proof the poll never sampled the spike).
 
 ---
 
+### 2026-07-14 — BUG FOUND & FIXED: exits filled at entry, not market price
+
+The very first scale-out (ETH, triggered at +0.65% / $1879.78) filled at **$1865.69 =
+entry × 0.999**, booking a +0.65% winner as a −$0.075 loss. Root cause: exit orders passed
+`entry*0.999` as the order price, and the paper trader's `simulateFill` falls back to the
+order price when its order-book snapshot for that symbol is stale/empty (ETH's was). So
+**every exit was filling at the entry price and discarding the actual move** — a pre-existing
+bug that only became visible once event-driven scale-out started firing.
+
+- **Fix:** thread the live trigger `price` into `exitMarket` and the scale-out order (was
+  `entry*0.999`). Exits now fill near current market whether or not the book snapshot is fresh.
+- Verified: build + vet pass, clean restart, grid buy @ $63,721. Correct fill to be confirmed
+  on the next live exit (watcher re-armed).
+
+---
+
 ## Live event journal
 
 _(Appended as notable exits / crash guard / daily lock fire or the bot restarts.)_
 
-- 2026-07-14 21:14 — Engine restarted on Balanced+crash-guard build. First grid leg @ $63,792.75.
-- 2026-07-14 21:50 — Restarted on event-driven-exits build (fresh DB, $1000).
-  First grid leg: 0.000783 BTC @ $63,828. Watcher re-armed for scale-out/trailing/TP/guard/lock.
+- 2026-07-14 21:14 — Restarted on Balanced+crash-guard build. First grid leg @ $63,792.75.
+- 2026-07-14 21:50 — Restarted on event-driven-exits build. First grid leg @ $63,828.
+- 2026-07-14 22:06 — ⚠️ First scale-out (ETH) fired but filled at entry×0.999 → exposed the
+  exit-fill bug above.
+- 2026-07-14 22:11 — Restarted on exit-fill-price-fix build (fresh DB, $1000).
+  First grid leg: 0.000785 BTC @ $63,721.39. Watcher re-armed.

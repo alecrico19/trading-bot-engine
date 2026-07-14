@@ -837,21 +837,21 @@ func (e *Engine) checkExits(ctx context.Context, symbol string, price float64) {
 		e.logger.Warn().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("stop-loss triggered")
 		e.alerts.Send(alert.LevelWarn, "Stop-Loss Triggered",
 			fmt.Sprintf("%s: %.2f%% loss, closing at $%.2f", symbol, pnlPct*100, price))
-		e.exitMarket(ctx, symbol, baseHeld, entry, "stop-loss")
+		e.exitMarket(ctx, symbol, baseHeld, entry, price, "stop-loss")
 		return
 	}
 
 	// 2. Grid stale-position exit (>2h) — rotate idle grid capital.
 	if e.isStrategyForSymbol("grid", symbol) && !entryTime.IsZero() && time.Since(entryTime) > 2*time.Hour {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Dur("age", time.Since(entryTime)).Str("symbol", symbol).Msg("grid stale-position exit (>2h)")
-		e.exitMarket(ctx, symbol, baseHeld, entry, "grid-stale-exit")
+		e.exitMarket(ctx, symbol, baseHeld, entry, price, "grid-stale-exit")
 		return
 	}
 
 	// 3. Full take-profit backstop — hard cap on a straight rocket.
 	if pnlPct >= e.cfg.Risk.TakeProfitTargetPct {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("full take-profit triggered")
-		e.exitMarket(ctx, symbol, baseHeld, entry, "take-profit-full")
+		e.exitMarket(ctx, symbol, baseHeld, entry, price, "take-profit-full")
 		return
 	}
 
@@ -861,7 +861,7 @@ func (e *Engine) checkExits(ctx context.Context, symbol string, price float64) {
 		amount := baseHeld * 0.5
 		if amount*price >= e.cfg.Risk.MinOrderSizeUSD {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("scale-out: selling 50% into strength")
-			order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "scale-out-50")
+			order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, price, "scale-out-50")
 			if err == nil && order != nil {
 				e.recordExit(order, entry, symbol, "scale-out-50")
 				e.mu.Lock()
@@ -889,17 +889,24 @@ func (e *Engine) checkExits(ctx context.Context, symbol string, price float64) {
 			e.logger.Warn().Float64("high", high).Float64("current", price).Str("symbol", symbol).Msg("trailing stop triggered")
 			e.alerts.Send(alert.LevelWarn, "Trailing Stop Triggered",
 				fmt.Sprintf("%s: locked profit, closing at $%.2f", symbol, price))
-			e.exitMarket(ctx, symbol, baseHeld, entry, "trailing-stop")
+			e.exitMarket(ctx, symbol, baseHeld, entry, price, "trailing-stop")
 		}
 	}
 }
 
-// exitMarket places a full market sell of amount and clears per-symbol position state.
-func (e *Engine) exitMarket(ctx context.Context, symbol string, amount, entry float64, reason string) {
+// exitMarket places a full market sell of amount at the current market price and clears
+// per-symbol position state. price (the live trigger price) is passed as the order price
+// so the paper trader fills near market even when its order-book snapshot is stale — using
+// entry here would fill exits at the entry price and discard the actual move.
+func (e *Engine) exitMarket(ctx context.Context, symbol string, amount, entry, price float64, reason string) {
 	if amount <= 0.00001 {
 		return
 	}
-	order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, reason)
+	limit := price
+	if limit <= 0 {
+		limit = entry
+	}
+	order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, limit, reason)
 	if err != nil {
 		e.logger.Error().Err(err).Str("symbol", symbol).Str("reason", reason).Msg("exit sell failed")
 		return
