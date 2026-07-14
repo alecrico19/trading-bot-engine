@@ -34,7 +34,7 @@ strategies:
 
   mean-reversion:
     enabled: true
-    symbols: ["BTCUSDT", "ETHUSDT"]
+    symbols: ["ETHUSDT"]
     rsi_period: 14
     rsi_oversold: 35
     rsi_overbought: 55
