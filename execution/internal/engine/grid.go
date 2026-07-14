@@ -34,11 +34,11 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 	}
 	buyUSD := s.cfg.PositionSizeUSD
 	if buyUSD == 0 {
-		buyUSD = 25
+		buyUSD = 50
 	}
 	maxPositions := s.cfg.OrderBookDepth
 	if maxPositions == 0 {
-		maxPositions = 3
+		maxPositions = 2
 	}
 
 	since := time.Since(s.lastBuy[symbol])

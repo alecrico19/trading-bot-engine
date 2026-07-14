@@ -5,18 +5,19 @@ exchanges:
     testnet: true
 
 risk:
-  max_position_pct: 0.08
-  max_daily_loss_pct: 0.05
-  max_concurrent_positions: 5
+  max_position_pct: 0.05          # ~$50/trade on $1000 equity (mean-reversion sizing)
+  max_daily_loss_pct: 0.03        # halt + flatten for the day at -3%
+  daily_profit_target_pct: 0.03   # bank + flatten for the day at +3%
+  max_concurrent_positions: 3
   circuit_breaker_drawdown_pct: 0.15
   max_order_size_usd: 500
   min_order_size_usd: 10
   max_price_deviation_pct: 0.02
-  stop_loss_pct: 0.005
-  trailing_stop_activate_pct: 0.02
-  trailing_stop_distance_pct: 0.03
-  take_profit_1r_pct: 0.0015
-  take_profit_target_pct: 0.003
+  stop_loss_pct: 0.008            # cut a loser at -0.8%
+  trailing_stop_activate_pct: 0.004  # arm trailing once +0.4% (clears fees)
+  trailing_stop_distance_pct: 0.002  # trail 0.2% below peak
+  take_profit_1r_pct: 0.0015      # partial TP disabled in code (below fee floor)
+  take_profit_target_pct: 0.006   # hard take-profit lock at +0.6%
 
 live_trading: false
 
@@ -40,14 +41,14 @@ strategies:
     rsi_overbought: 55
     bb_period: 20
     bb_stddev: 1.2
-    position_size_usd: 100
+    position_size_usd: 50
 
   grid:
     enabled: true
     symbols: ["BTCUSDT"]
     rsi_period: 2
-    order_book_depth: 3
-    position_size_usd: 25
+    order_book_depth: 2
+    position_size_usd: 50
 
   tick-momentum:
     enabled: false

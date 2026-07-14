@@ -18,6 +18,17 @@ import (
 	"trading-bot/execution/internal/types"
 )
 
+// feeRate is the per-side trading fee (0.1%), matching the paper trader's fill model.
+// Reported P&L subtracts a round-trip fee so the trade log agrees with realized equity.
+const feeRate = 0.001
+
+// netPnL returns realized profit for a round trip after round-trip fees.
+func netPnL(entry, exit, filled float64) float64 {
+	gross := (exit - entry) * filled
+	fees := (entry + exit) * filled * feeRate
+	return gross - fees
+}
+
 type EquityPoint struct {
 	Time  time.Time `json:"t"`
 	Value float64   `json:"v"`
@@ -44,6 +55,10 @@ type Engine struct {
 	entryTime   map[string]time.Time
 	lastTrade   map[string]float64
 	equityHist  []EquityPoint
+
+	dayDate        string  // current trading day (YYYY-MM-DD)
+	dayStartEquity float64 // equity captured at the first tick of the day
+	dayHalted      bool    // true once the daily profit-lock or loss-stop has fired
 
 	mu     sync.RWMutex
 	running bool
@@ -165,6 +180,14 @@ func (e *Engine) collectSymbols() []string {
 			}
 		case "mean-reversion":
 			for _, sym := range e.cfg.Strategies["mean-reversion"].Symbols {
+				seen[sym] = true
+			}
+		case "grid":
+			for _, sym := range e.cfg.Strategies["grid"].Symbols {
+				seen[sym] = true
+			}
+		case "tick-momentum":
+			for _, sym := range e.cfg.Strategies["tick-momentum"].Symbols {
 				seen[sym] = true
 			}
 		}
@@ -431,6 +454,11 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 			return
 		}
 
+		preEntry := 0.0
+		if preSellPos, ok := e.orderMgr.GetPosition(decision.Symbol); ok {
+			preEntry = preSellPos.AvgPrice
+		}
+
 		order, err := e.orderMgr.PlaceOrder(ctx, decision.Symbol, decision.Side, decision.Type, amount, decision.Price, decision.Strategy)
 		if err != nil {
 			e.logger.Error().Err(err).Str("strategy", decision.Strategy).Msg("order failed")
@@ -447,18 +475,13 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 		pnl := 0.0
 		if order.Side == types.SideBuy {
 			pnl = 0
-		} else {
-			e.mu.RLock()
-			entry := e.entryPrice[decision.Symbol]
-			e.mu.RUnlock()
-			if entry > 0 {
-				pnl = (order.AvgPrice - entry) * order.Filled
-			}
+		} else if preEntry > 0 {
+			pnl = netPnL(preEntry, order.AvgPrice, order.Filled)
 		}
 		e.logger.Info().
 			Str("symbol", decision.Symbol).
 			Str("side", string(order.Side)).
-			Float64("entry", func() float64 { e.mu.RLock(); defer e.mu.RUnlock(); return e.entryPrice[decision.Symbol] }()).
+			Float64("entry", preEntry).
 			Float64("avg_price", order.AvgPrice).
 			Float64("filled", order.Filled).
 			Float64("pnl", pnl).
@@ -745,8 +768,13 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		return
 	}
 
+	pos, hasPos := e.orderMgr.GetPosition(symbol)
+	entry := 0.0
+	if hasPos {
+		entry = pos.AvgPrice
+	}
+
 	e.mu.RLock()
-	entry := e.entryPrice[symbol]
 	high := e.highWater[symbol]
 	e.mu.RUnlock()
 
@@ -802,6 +830,19 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 	e.mu.RLock()
 	scalpEntryTime := e.entryTime[symbol]
 	e.mu.RUnlock()
+
+	if e.isStrategyForSymbol("grid", symbol) && !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 2*time.Hour {
+		e.logger.Info().Float64("pnlPct", pnlPct*100).Dur("age", time.Since(scalpEntryTime)).Str("symbol", symbol).Msg("grid stale-position exit (>2h)")
+		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "grid-stale-exit")
+		e.recordExit(order, entry, symbol, "grid-stale-exit")
+		e.mu.Lock()
+		e.entryPrice[symbol] = 0
+		e.highWater[symbol] = 0
+		e.entryTime[symbol] = time.Time{}
+		e.mu.Unlock()
+		return
+	}
+
 	if false && !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 90*time.Second && pnlPct < 0 {
 		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("time exit (loser, >90s)")
 		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "time-exit")
@@ -825,7 +866,10 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 		return
 	}
 
-	if pnlPct >= e.cfg.Risk.TakeProfit1RPct {
+	// Partial take-profit at TakeProfit1RPct (0.15%) is disabled: it fires below the
+	// ~0.2% round-trip fee floor, so it books a guaranteed net loss. Winners are now
+	// captured by the full take-profit (TakeProfitTargetPct) and the trailing stop.
+	if false && pnlPct >= e.cfg.Risk.TakeProfit1RPct {
 		amount := baseHeld * 0.5
 		if amount > 0.00001 {
 			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("partial take-profit (50%)")
@@ -943,11 +987,13 @@ func (e *Engine) runAlertMonitor(ctx context.Context, wg *sync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			equity := e.GetEquity()
+			e.evaluateDailyLock(ctx, equity)
+
 			if e.riskMgr.IsBreached() {
 				continue
 			}
 
-			equity := e.GetEquity()
 			dailyPnL, trades, _ := e.riskMgr.DailyStats()
 
 			if equity > 0 {
@@ -964,6 +1010,103 @@ func (e *Engine) runAlertMonitor(ctx context.Context, wg *sync.WaitGroup) {
 				lastTradeCount = e.tradeCount
 			}
 		}
+	}
+}
+
+// evaluateDailyLock enforces the daily profit-lock / loss-stop. When equity crosses
+// +daily_profit_target_pct or -max_daily_loss_pct relative to the day's opening equity,
+// it flattens all positions and halts new entries for the rest of the day. At the first
+// tick of a new calendar day it re-baselines and resumes trading.
+func (e *Engine) evaluateDailyLock(ctx context.Context, equity float64) {
+	if equity <= 0 {
+		return
+	}
+	today := time.Now().Format("2006-01-02")
+
+	e.mu.Lock()
+	if e.dayDate != today {
+		e.dayDate = today
+		e.dayStartEquity = equity
+		wasHalted := e.dayHalted
+		e.dayHalted = false
+		e.mu.Unlock()
+		if wasHalted {
+			e.ResumeAll()
+			e.logger.Info().Str("day", today).Float64("start_equity", equity).Msg("new trading day: daily lock reset, trading resumed")
+		}
+		return
+	}
+	start := e.dayStartEquity
+	halted := e.dayHalted
+	e.mu.Unlock()
+
+	if halted || start <= 0 {
+		return
+	}
+
+	dayPnLPct := (equity - start) / start
+	profitTarget := e.cfg.Risk.DailyProfitTargetPct
+	lossLimit := e.cfg.Risk.MaxDailyLossPct
+
+	if profitTarget > 0 && dayPnLPct >= profitTarget {
+		e.haltForDay(ctx, fmt.Sprintf("daily profit target hit: +%.2f%% (equity $%.2f)", dayPnLPct*100, equity))
+		return
+	}
+	if lossLimit > 0 && dayPnLPct <= -lossLimit {
+		e.haltForDay(ctx, fmt.Sprintf("daily loss stop hit: %.2f%% (equity $%.2f)", dayPnLPct*100, equity))
+	}
+}
+
+// haltForDay pauses all strategies, flattens open positions to lock in the day's result,
+// and latches the halt until the next calendar day.
+func (e *Engine) haltForDay(ctx context.Context, reason string) {
+	e.mu.Lock()
+	if e.dayHalted {
+		e.mu.Unlock()
+		return
+	}
+	e.dayHalted = true
+	e.mu.Unlock()
+
+	e.PauseAll()
+	e.flattenAllPositions(ctx)
+	e.alerts.Send(alert.LevelWarn, "Trading Halted For The Day", reason)
+	e.logger.Warn().Str("reason", reason).Msg("daily lock: trading halted for the day")
+}
+
+// flattenAllPositions market-sells every non-quote holding to realize the current book.
+func (e *Engine) flattenAllPositions(ctx context.Context) {
+	for _, h := range e.GetHoldings() {
+		if h.Asset == "USDT" || h.Asset == "USD" || h.Asset == "USDC" {
+			continue
+		}
+		amount := h.Free + h.Locked
+		if amount <= 0.00001 {
+			continue
+		}
+		symbol := h.Asset + "USDT"
+		ticker, err := e.marketData.FetchTicker(ctx, symbol)
+		if err != nil || ticker == nil || ticker.Last <= 0 {
+			continue
+		}
+		if amount*ticker.Last < e.cfg.Risk.MinOrderSizeUSD {
+			continue
+		}
+		entry := 0.0
+		if pos, ok := e.orderMgr.GetPosition(symbol); ok {
+			entry = pos.AvgPrice
+		}
+		order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount*0.999, ticker.Last*0.999, "daily-flatten")
+		if err != nil {
+			e.logger.Error().Err(err).Str("symbol", symbol).Msg("daily flatten: sell failed")
+			continue
+		}
+		e.recordExit(order, entry, symbol, "daily-flatten")
+		e.mu.Lock()
+		e.entryPrice[symbol] = 0
+		e.highWater[symbol] = 0
+		e.entryTime[symbol] = time.Time{}
+		e.mu.Unlock()
 	}
 }
 
@@ -988,7 +1131,7 @@ func (e *Engine) recordExit(order *types.Order, entry float64, symbol, strat str
 	if order == nil || order.Status != types.StatusFilled {
 		return
 	}
-	pnl := (order.AvgPrice - entry) * order.Filled
+	pnl := netPnL(entry, order.AvgPrice, order.Filled)
 	e.logger.Info().Float64("pnl", pnl).Str("symbol", symbol).Str("strategy", strat).Msg("exit trade P&L")
 	e.db.RecordTrade(order, pnl)
 	e.riskMgr.RecordTrade(pnl)

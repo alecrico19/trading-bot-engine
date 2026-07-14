@@ -17,6 +17,7 @@ type ExchangeConfig struct {
 type RiskConfig struct {
 	MaxPositionPct            float64 `mapstructure:"max_position_pct"`
 	MaxDailyLossPct           float64 `mapstructure:"max_daily_loss_pct"`
+	DailyProfitTargetPct      float64 `mapstructure:"daily_profit_target_pct"`
 	MaxConcurrentPositions    int     `mapstructure:"max_concurrent_positions"`
 	CircuitBreakerDrawdownPct float64 `mapstructure:"circuit_breaker_drawdown_pct"`
 	MaxOrderSizeUSD           float64 `mapstructure:"max_order_size_usd"`
