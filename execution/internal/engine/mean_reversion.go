@@ -150,22 +150,9 @@ func (s *MeanReversionStrategy) Evaluate(state *types.MarketState) *types.Decisi
 		}
 	}
 
-	if !hasPosition && rsi > rsiOverbought && ticker.Last >= upper {
-		if signal != nil && signal.Direction == types.SignalDirectionLong {
-			return nil
-		}
-		return &types.Decision{
-			Action:   types.ActionSell,
-			Symbol:   state.Symbol,
-			Side:     types.SideSell,
-			Amount:   0,
-			Price:    ticker.Last,
-			Type:     types.TypeLimit,
-			Reason:   "entry: RSI overbought + above upper BB",
-			SignalID: signalID,
-			Strategy: s.Name(),
-		}
-	}
+	// Short entries are disabled: this runs on a spot paper account with no borrow, so a
+	// sell with no position can never fill ("insufficient balance for sell") and just spams
+	// failed orders. Mean-reversion here is long-only: buy oversold dips, sell to flat.
 
 	return nil
 }

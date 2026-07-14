@@ -61,6 +61,8 @@ type Engine struct {
 	dayHalted      bool    // true once the daily profit-lock or loss-stop has fired
 
 	priceSamples map[string][]pricePoint // rolling per-symbol prices for the crash guard
+	scaleOutDone map[string]bool         // first take-profit tranche already sold for symbol
+	exiting      map[string]bool         // guards against concurrent exits (poll vs trade stream)
 
 	mu      sync.RWMutex
 	running bool
@@ -93,6 +95,8 @@ func New(cfg *config.Config, ex exchange.Exchange, marketData exchange.Exchange,
 		entryTime:    make(map[string]time.Time),
 		lastTrade:    make(map[string]float64),
 		priceSamples: make(map[string][]pricePoint),
+		scaleOutDone: make(map[string]bool),
+		exiting:      make(map[string]bool),
 	}
 }
 
@@ -365,6 +369,13 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 			e.mu.Lock()
 			e.lastTrade[symbol] = trade.Price
 			e.mu.Unlock()
+
+			// Event-driven exits: evaluate stop/scale-out/take-profit/trailing on every
+			// tick so fast upticks (wicks) are captured, not just on the 3s poll.
+			if !e.riskMgr.IsBreached() {
+				e.checkExits(ctx, symbol, trade.Price)
+			}
+
 			for _, strat := range e.strategies {
 				if strat.Name() != "tick-momentum" && strat.Name() != "scalping" && strat.Name() != "grid" {
 					continue
@@ -533,6 +544,7 @@ func (e *Engine) executeDecision(ctx context.Context, decision *types.Decision) 
 				e.entryPrice[decision.Symbol] = 0
 				e.highWater[decision.Symbol] = 0
 				e.entryTime[decision.Symbol] = time.Time{}
+				e.scaleOutDone[decision.Symbol] = false
 			}
 		}
 		e.mu.Unlock()
@@ -772,25 +784,30 @@ func (e *Engine) runStopLoss(ctx context.Context, wg *sync.WaitGroup, symbols []
 	}
 }
 
+// checkStopLoss is the periodic (3s) backstop: fetch the ticker and evaluate exits.
+// The primary, low-latency path is checkExits called from the trade stream on every tick.
 func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
-	holdings := e.GetHoldings()
-	var baseHeld float64
-	for _, h := range holdings {
-		if h.Asset == "USDT" || h.Asset == "USD" || h.Asset == "USDC" {
-			continue
-		}
-		base := h.Asset + "USDT"
-		if base != symbol {
-			continue
-		}
-		baseHeld = h.Free + h.Locked
-	}
-	if baseHeld <= 0.00001 {
-		return
-	}
-
 	ticker, err := e.marketData.FetchTicker(ctx, symbol)
 	if err != nil || ticker == nil || ticker.Last <= 0 {
+		return
+	}
+	e.checkExits(ctx, symbol, ticker.Last)
+}
+
+// checkExits evaluates stop-loss, scale-out, take-profit and trailing for one symbol at
+// the given price. It is safe to call from both the 3s poll and the real-time trade
+// stream — a per-symbol guard prevents concurrent evaluations from double-selling.
+func (e *Engine) checkExits(ctx context.Context, symbol string, price float64) {
+	if price <= 0 {
+		return
+	}
+	if !e.beginExit(symbol) {
+		return // an exit evaluation for this symbol is already in flight
+	}
+	defer e.endExit(symbol)
+
+	baseHeld := e.baseHeld(symbol)
+	if baseHeld <= 0.00001 {
 		return
 	}
 
@@ -799,134 +816,123 @@ func (e *Engine) checkStopLoss(ctx context.Context, symbol string) {
 	if hasPos {
 		entry = pos.AvgPrice
 	}
-
-	e.mu.RLock()
-	high := e.highWater[symbol]
-	e.mu.RUnlock()
-
-	if entry > 0 && (ticker.Last < entry*0.90 || ticker.Last > entry*1.10) {
-		e.logger.Warn().Float64("ticker", ticker.Last).Float64("entry", entry).Str("symbol", symbol).Msg("ticker price anomaly, skipping")
-		return
-	}
-
 	if entry <= 0 {
 		return
 	}
-
-	pnlPct := (ticker.Last - entry) / entry
-
-	if false && high > entry && (high-ticker.Last)/high > 0.0002 {
-		amount := baseHeld * 0.5
-		if amount > 0.00001 {
-			e.logger.Info().Float64("high", high).Float64("current", ticker.Last).Str("symbol", symbol).Msg("peak-drop exit (0.02% from high)")
-			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "peak-drop")
-			e.recordExit(order, entry, symbol, "peak-drop")
-		}
-	}
-
-	if false && pnlPct >= 0.0005 {
-		amount := baseHeld * 0.5
-		if amount > 0.00001 {
-			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("mini profit exit (0.05%)")
-			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "mini-profit")
-			e.recordExit(order, entry, symbol, "mini-profit")
-			e.mu.Lock()
-			e.entryPrice[symbol] = 0
-			e.entryTime[symbol] = time.Time{}
-			e.highWater[symbol] = 0
-			e.mu.Unlock()
-		}
-	}
-
-	if pnlPct <= -e.cfg.Risk.StopLossPct {
-		amount := baseHeld
-		e.logger.Warn().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("stop-loss triggered")
-		e.alerts.Send(alert.LevelWarn, "Stop-Loss Triggered",
-			fmt.Sprintf("%s: %.1f%% loss, closing at $%.2f", symbol, pnlPct*100, ticker.Last))
-
-		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "stop-loss")
-		e.recordExit(order, entry, symbol, "stop-loss")
-		e.mu.Lock()
-		e.entryPrice[symbol] = 0
-		e.highWater[symbol] = 0
-		e.mu.Unlock()
+	if price < entry*0.90 || price > entry*1.10 {
+		e.logger.Warn().Float64("price", price).Float64("entry", entry).Str("symbol", symbol).Msg("price anomaly, skipping exit")
 		return
 	}
+
+	pnlPct := (price - entry) / entry
 
 	e.mu.RLock()
-	scalpEntryTime := e.entryTime[symbol]
+	high := e.highWater[symbol]
+	entryTime := e.entryTime[symbol]
+	scaledOut := e.scaleOutDone[symbol]
 	e.mu.RUnlock()
 
-	if e.isStrategyForSymbol("grid", symbol) && !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 2*time.Hour {
-		e.logger.Info().Float64("pnlPct", pnlPct*100).Dur("age", time.Since(scalpEntryTime)).Str("symbol", symbol).Msg("grid stale-position exit (>2h)")
-		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "grid-stale-exit")
-		e.recordExit(order, entry, symbol, "grid-stale-exit")
-		e.mu.Lock()
-		e.entryPrice[symbol] = 0
-		e.highWater[symbol] = 0
-		e.entryTime[symbol] = time.Time{}
-		e.mu.Unlock()
+	// 1. Stop-loss
+	if pnlPct <= -e.cfg.Risk.StopLossPct {
+		e.logger.Warn().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("stop-loss triggered")
+		e.alerts.Send(alert.LevelWarn, "Stop-Loss Triggered",
+			fmt.Sprintf("%s: %.2f%% loss, closing at $%.2f", symbol, pnlPct*100, price))
+		e.exitMarket(ctx, symbol, baseHeld, entry, "stop-loss")
 		return
 	}
 
-	if false && !scalpEntryTime.IsZero() && time.Since(scalpEntryTime) > 90*time.Second && pnlPct < 0 {
-		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("time exit (loser, >90s)")
-		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "time-exit")
-		e.recordExit(order, entry, symbol, "time-exit")
-		e.mu.Lock()
-		e.entryPrice[symbol] = 0
-		e.highWater[symbol] = 0
-		e.entryTime[symbol] = time.Time{}
-		e.mu.Unlock()
+	// 2. Grid stale-position exit (>2h) — rotate idle grid capital.
+	if e.isStrategyForSymbol("grid", symbol) && !entryTime.IsZero() && time.Since(entryTime) > 2*time.Hour {
+		e.logger.Info().Float64("pnlPct", pnlPct*100).Dur("age", time.Since(entryTime)).Str("symbol", symbol).Msg("grid stale-position exit (>2h)")
+		e.exitMarket(ctx, symbol, baseHeld, entry, "grid-stale-exit")
 		return
 	}
 
+	// 3. Full take-profit backstop — hard cap on a straight rocket.
 	if pnlPct >= e.cfg.Risk.TakeProfitTargetPct {
-		e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("full take-profit triggered")
-		order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, baseHeld, entry*0.999, "take-profit-full")
-		e.recordExit(order, entry, symbol, "take-profit-full")
-		e.mu.Lock()
-		e.entryPrice[symbol] = 0
-		e.highWater[symbol] = 0
-		e.mu.Unlock()
+		e.logger.Info().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("full take-profit triggered")
+		e.exitMarket(ctx, symbol, baseHeld, entry, "take-profit-full")
 		return
 	}
 
-	// Partial take-profit at TakeProfit1RPct (0.15%) is disabled: it fires below the
-	// ~0.2% round-trip fee floor, so it books a guaranteed net loss. Winners are now
-	// captured by the full take-profit (TakeProfitTargetPct) and the trailing stop.
-	if false && pnlPct >= e.cfg.Risk.TakeProfit1RPct {
+	// 4. Scale-out: sell half once at the first tranche, let the rest run under the trailing
+	//    stop. Skipped if the half-slice would fall below the exchange minimum order size.
+	if !scaledOut && e.cfg.Risk.TakeProfit1RPct > 0 && pnlPct >= e.cfg.Risk.TakeProfit1RPct {
 		amount := baseHeld * 0.5
-		if amount > 0.00001 {
-			e.logger.Info().Float64("pnlPct", pnlPct*100).Str("symbol", symbol).Msg("partial take-profit (50%)")
-			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "take-profit-50")
-			e.recordExit(order, entry, symbol, "take-profit-50")
-			e.entryPrice[symbol] = 0
+		if amount*price >= e.cfg.Risk.MinOrderSizeUSD {
+			e.logger.Info().Float64("pnlPct", pnlPct*100).Float64("price", price).Str("symbol", symbol).Msg("scale-out: selling 50% into strength")
+			order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "scale-out-50")
+			if err == nil && order != nil {
+				e.recordExit(order, entry, symbol, "scale-out-50")
+				e.mu.Lock()
+				e.scaleOutDone[symbol] = true
+				if price > e.highWater[symbol] {
+					e.highWater[symbol] = price
+				}
+				high = e.highWater[symbol]
+				e.mu.Unlock()
+				baseHeld -= amount
+			}
 		}
 	}
 
+	// 5. Trailing stop on the remainder (arms at TrailingStopActivatePct).
 	if pnlPct >= e.cfg.Risk.TrailingStopActivatePct {
-		if ticker.Last > high {
+		if price > high {
 			e.mu.Lock()
-			e.highWater[symbol] = ticker.Last
+			e.highWater[symbol] = price
 			e.mu.Unlock()
-			high = ticker.Last
+			high = price
 		}
 		trailPrice := high * (1 - e.cfg.Risk.TrailingStopDistancePct)
-		if ticker.Last <= trailPrice {
-			amount := baseHeld
-			e.logger.Warn().Float64("high", high).Float64("current", ticker.Last).Str("symbol", symbol).Msg("trailing stop triggered")
+		if price <= trailPrice && baseHeld > 0.00001 {
+			e.logger.Warn().Float64("high", high).Float64("current", price).Str("symbol", symbol).Msg("trailing stop triggered")
 			e.alerts.Send(alert.LevelWarn, "Trailing Stop Triggered",
-				fmt.Sprintf("%s: locked profit, closing at $%.2f", symbol, ticker.Last))
-
-			order, _ := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, "trailing-stop")
-			e.recordExit(order, entry, symbol, "trailing-stop")
-			e.mu.Lock()
-			e.entryPrice[symbol] = 0
-			e.highWater[symbol] = 0
-			e.mu.Unlock()
+				fmt.Sprintf("%s: locked profit, closing at $%.2f", symbol, price))
+			e.exitMarket(ctx, symbol, baseHeld, entry, "trailing-stop")
 		}
 	}
+}
+
+// exitMarket places a full market sell of amount and clears per-symbol position state.
+func (e *Engine) exitMarket(ctx context.Context, symbol string, amount, entry float64, reason string) {
+	if amount <= 0.00001 {
+		return
+	}
+	order, err := e.orderMgr.PlaceOrder(ctx, symbol, types.SideSell, types.TypeMarket, amount, entry*0.999, reason)
+	if err != nil {
+		e.logger.Error().Err(err).Str("symbol", symbol).Str("reason", reason).Msg("exit sell failed")
+		return
+	}
+	e.recordExit(order, entry, symbol, reason)
+	e.resetPositionState(symbol)
+}
+
+// resetPositionState clears all per-symbol tracking after a position is fully closed.
+func (e *Engine) resetPositionState(symbol string) {
+	e.mu.Lock()
+	e.entryPrice[symbol] = 0
+	e.highWater[symbol] = 0
+	e.entryTime[symbol] = time.Time{}
+	e.scaleOutDone[symbol] = false
+	e.mu.Unlock()
+}
+
+// beginExit claims the per-symbol exit guard; returns false if an evaluation is in flight.
+func (e *Engine) beginExit(symbol string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.exiting[symbol] {
+		return false
+	}
+	e.exiting[symbol] = true
+	return true
+}
+
+func (e *Engine) endExit(symbol string) {
+	e.mu.Lock()
+	e.exiting[symbol] = false
+	e.mu.Unlock()
 }
 
 func (e *Engine) PauseAll() {
@@ -1128,11 +1134,7 @@ func (e *Engine) flattenAllPositions(ctx context.Context) {
 			continue
 		}
 		e.recordExit(order, entry, symbol, "daily-flatten")
-		e.mu.Lock()
-		e.entryPrice[symbol] = 0
-		e.highWater[symbol] = 0
-		e.entryTime[symbol] = time.Time{}
-		e.mu.Unlock()
+		e.resetPositionState(symbol)
 	}
 }
 

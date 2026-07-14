@@ -16,8 +16,8 @@ risk:
   stop_loss_pct: 0.008            # cut a loser at -0.8%
   trailing_stop_activate_pct: 0.004  # arm trailing once +0.4% (clears fees)
   trailing_stop_distance_pct: 0.002  # trail 0.2% below peak
-  take_profit_1r_pct: 0.0015      # partial TP disabled in code (below fee floor)
-  take_profit_target_pct: 0.006   # hard take-profit lock at +0.6%
+  take_profit_1r_pct: 0.005       # scale-out: sell 50% into strength at +0.5%
+  take_profit_target_pct: 0.01    # hard take-profit backstop at +1.0% (rest runs on trailing)
   crash_guard_drop_pct: 0.02      # block NEW buys if price fell >2%...
   crash_guard_lookback_min: 30    # ...over the last 30 minutes (0 = disabled)
 

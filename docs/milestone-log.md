@@ -1,6 +1,6 @@
 # Milestone Log — Balanced Profitability Profile
 
-**Status:** 🟢 Running (paper) · **Profile:** Balanced · **Last updated:** 2026-07-14 21:20
+**Status:** 🟢 Running (paper) · **Profile:** Balanced · **Last updated:** 2026-07-14 21:52
 
 Running log of significant changes and live events. Updated at every milestone.
 Related: [[why-stops-at-3]] · [[honest-assessment]] · [[retrospective]] · [[dca-grid-plan]] · [[best-path]]
@@ -13,10 +13,11 @@ Related: [[why-stops-at-3]] · [[honest-assessment]] · [[retrospective]] · [[d
 |---|---|
 | Position size | ~$50/trade |
 | Max concurrent positions | 3 (grid ≤2 BTC, mean-rev ≤1 ETH) |
-| Full take-profit | +0.6% |
+| Exit engine | **event-driven** (every trade tick) + 3s poll backstop |
+| Scale-out | sell **50% at +0.5%** into strength, once per position |
+| Full take-profit backstop | +1.0% (remainder runs on trailing) |
 | Trailing stop | arms +0.4%, trails 0.2% below peak |
 | Stop-loss | −0.8% |
-| Partial take-profit (0.15%) | **disabled** (below fee floor) |
 | Daily profit-lock | +3% → flatten + halt for day |
 | Daily loss-stop | −3% → flatten + halt for day |
 | Crash guard | block new buys if −2% over 30 min |
@@ -60,9 +61,31 @@ wiring active, no errors, crash guard correctly dormant during warmup.
 
 ---
 
+### 2026-07-14 — Capture upticks: event-driven exits + scale-out + ETH short fix
+
+Prompted by BTC wicking to ~$64,181 without the bot selling. Root cause: exits ran on a
+**3-second poll**, so fast wicks passed between samples (even the trailing, armed far lower,
+never fired — proof the poll never sampled the spike).
+
+- **Event-driven exits.** Take-profit / scale-out / trailing / stop now evaluate on **every
+  trade tick** (`checkExits`), with the 3s poll kept as a backstop. A per-symbol guard
+  (`beginExit`/`endExit`) prevents the poll and stream from double-selling.
+- **Scale-out ladder.** Sell **50% at +0.5%** into strength (once per position via
+  `scaleOutDone`), let the remainder run under the trailing stop; hard backstop at +1.0%.
+  This is the "sell some into the uptick" behaviour that was missing.
+- **ETH short-spam fixed.** Mean-reversion was emitting short entries on a spot paper
+  account that can't short → endless `insufficient balance for sell`. Made mean-reversion
+  **long-only**. Verified: spam count now 0.
+- **Verified live:** build + vet pass, grid buys $50 BTC leg, ETH spam gone, no errors.
+- **Not yet observed live:** an actual scale-out / trailing capture (needs a favourable move).
+- Commits (local, not yet pushed): see `git log`.
+
+---
+
 ## Live event journal
 
-_(Appended automatically as the crash guard / daily lock fire or the bot restarts.)_
+_(Appended as notable exits / crash guard / daily lock fire or the bot restarts.)_
 
-- 2026-07-14 21:14 — Engine restarted on Balanced+crash-guard build. Day baseline ≈ $1000
-  (lock triggers ≈ $1030 / $970). First grid leg: 0.000784 BTC @ $63,792.75.
+- 2026-07-14 21:14 — Engine restarted on Balanced+crash-guard build. First grid leg @ $63,792.75.
+- 2026-07-14 21:50 — Restarted on event-driven-exits build (fresh DB, $1000).
+  First grid leg: 0.000783 BTC @ $63,828. Watcher re-armed for scale-out/trailing/TP/guard/lock.
