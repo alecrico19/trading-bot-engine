@@ -42,6 +42,13 @@ strategies:
     bb_stddev: 1.2
     position_size_usd: 100
 
+  grid:
+    enabled: true
+    symbols: ["BTCUSDT"]
+    rsi_period: 2
+    order_book_depth: 3
+    position_size_usd: 25
+
   tick-momentum:
     enabled: false
     symbols: ["BTCUSDT", "ETHUSDT"]

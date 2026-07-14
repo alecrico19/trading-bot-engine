@@ -331,7 +331,7 @@ func (e *Engine) runTradeStream(ctx context.Context, wg *sync.WaitGroup, symbol 
 			e.lastTrade[symbol] = trade.Price
 			e.mu.Unlock()
 			for _, strat := range e.strategies {
-				if strat.Name() != "tick-momentum" && strat.Name() != "scalping" {
+				if strat.Name() != "tick-momentum" && strat.Name() != "scalping" && strat.Name() != "grid" {
 					continue
 				}
 				if !e.isStrategyForSymbol(strat.Name(), symbol) {
