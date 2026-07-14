@@ -37,9 +37,9 @@ strategies:
     symbols: ["BTCUSDT", "ETHUSDT"]
     rsi_period: 14
     rsi_oversold: 35
-    rsi_overbought: 65
+    rsi_overbought: 55
     bb_period: 20
-    bb_stddev: 1.5
+    bb_stddev: 1.2
     position_size_usd: 100
 
   tick-momentum:
