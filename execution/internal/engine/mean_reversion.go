@@ -100,6 +100,9 @@ func (s *MeanReversionStrategy) Evaluate(state *types.MarketState) *types.Decisi
 	for _, p := range state.Positions {
 		if p.Symbol == state.Symbol && abs(p.Amount) > 0.00001 {
 			hasPosition = true
+			if p.Amount*ticker.Last < 10 {
+				continue
+			}
 			if p.Side == "long" && (rsi > rsiOverbought || ticker.Last > upper) {
 				return &types.Decision{
 					Action:   types.ActionSell,
