@@ -147,6 +147,11 @@ _(Appended as notable exits / crash guard / daily lock fire or the bot restarts.
 - 2026-07-15 09:45 — Now running under **systemd** (`trading-bot.service`, enabled + linger),
   on the downtrend-warmup build. Engine started 09:43, first grid buy 09:45 — the ~90s
   warmup delay confirmed (no blind startup buy), single leg @ $64,692.51.
+- 2026-07-15 10:00 — ✅ Windows boot-start complete. Scheduled task `StartTradingBotWSL`
+  (At logon, runs `wscript.exe C:\Users\AlecR\start-trading-bot.vbs`) registered and Ready.
+  Full chain verified: Windows logon → hidden VBS → `wsl.exe -d Ubuntu-26.04` → systemd →
+  trading-bot.service → engine. The user ran the elevated schtasks command (task creation
+  needs admin, which the WSL agent can't get).
 
 ### 2026-07-15 — Auto-start on boot + no blind startup buy
 
