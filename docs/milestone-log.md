@@ -114,3 +114,33 @@ _(Appended as notable exits / crash guard / daily lock fire or the bot restarts.
   tranches net-positive. Equity $1000.35, 2 wins. This is the scale-out-into-strength +
   let-the-rest-run behaviour working as designed. Watcher narrowed back to crash-guard /
   daily-lock only (exits now fire routinely — no need to notify per exit).
+
+### 2026-07-15 — Grid re-arm (keep capital working) + downtrend gate
+
+The grid used to bank a profit then sit idle ~2h before re-buying (fixed 2h timer keyed off
+last *buy*, no awareness the position had closed). Also: the machine rebooted overnight,
+`/tmp` cleared, so the bot was down — restarted it this morning.
+
+- **Re-arm on exit.** Flat grid now re-buys after a short cooldown (`reEntryCooldown`,
+  10 min) instead of the full 2h interval; a held leg still uses the 2h DCA interval to add.
+- **Downtrend gate.** Grid keeps its own ~10-min price window and holds off re-buying if
+  price fell >0.3% over it (`grid: holding off, short downtrend`). This is gentler/shorter
+  than the engine crash guard (−2%/30min), which stays as the global hard block.
+- **Implementation note (deviated from plan):** gated the flat case on `lastBuy`, not
+  `lastExit`. The first build used `lastExit`, which is zero at startup → no gate → the grid
+  fired a double-buy before the async fill registered. Keying the cooldown off `lastBuy`
+  throttles rapid re-fires AND still re-arms after an exit (a held-then-closed leg has an old
+  `lastBuy`). Dropped the now-unneeded `lastExit`/`hadPosition` tracking.
+- **Verified live:** build + vet pass; restart yields exactly ONE grid buy
+  (0.000771 BTC @ $64,819.99), no double-buy, no runaway, no errors.
+- **Not yet observed live:** a full re-arm cycle (needs BTC to close the leg first) and a
+  downtrend hold-off. Will show up in normal operation.
+
+---
+
+## Live event journal
+
+_(Appended as notable exits / crash guard / daily lock fire or the bot restarts.)_
+
+- 2026-07-15 09:31 — Restarted on grid-re-arm build (fresh DB, $1000; machine had rebooted
+  overnight). First grid leg: 0.000771 BTC @ $64,819.99. Single buy confirmed.
