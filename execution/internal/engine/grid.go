@@ -9,14 +9,15 @@ import (
 	"trading-bot/execution/internal/types"
 )
 
-// Grid re-entry tunables. After a grid position fully closes, the grid re-arms and can
-// re-buy once reEntryCooldown has elapsed — provided the short-term trend isn't falling.
-// These are intentionally gentler/shorter than the engine crash guard (-2% / 30 min),
-// which remains the global hard block on any buy.
+// Grid re-entry / downtrend tunables. After a grid position fully closes, the grid re-arms
+// and can re-buy once reEntryCooldown has elapsed — but only once its short price window has
+// warmed up and isn't falling. These are gentler/shorter than the engine crash guard
+// (-2% / 30 min), which remains the global hard block on any buy.
 const (
 	reEntryCooldown    = 10 * time.Minute
-	trendLookback      = 10 * time.Minute
-	trendDropThreshold = 0.003 // skip re-buy if price fell >0.3% over the lookback window
+	trendLookback      = 5 * time.Minute
+	trendWarmup        = 90 * time.Second // min history before the grid trusts its trend read
+	trendDropThreshold = 0.0015           // skip buy if price fell >0.15% over the window
 )
 
 type GridStrategy struct {
@@ -54,13 +55,21 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		maxPositions = 2
 	}
 
+	ticker := state.Ticker
+	if ticker == nil || ticker.Last <= 0 {
+		s.logger.Debug().Str("symbol", symbol).Msg("grid: no ticker")
+		return nil
+	}
+	// Keep the trend window fresh on every tick, regardless of position/timing state, so a
+	// re-entry after a long hold still judges the trend against recent prices.
+	s.recordPrice(symbol, ticker.Last)
+
 	entryCount := 0
 	for _, p := range state.Positions {
 		if p.Symbol == symbol && abs(p.Amount) > 0.00001 {
 			entryCount++
 		}
 	}
-
 	if entryCount >= maxPositions {
 		s.logger.Debug().Str("symbol", symbol).Int("count", entryCount).Int("max", maxPositions).Msg("grid: position cap")
 		return nil
@@ -80,15 +89,13 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 		return nil
 	}
 
-	ticker := state.Ticker
-	if ticker == nil || ticker.Last <= 0 {
-		s.logger.Debug().Str("symbol", symbol).Msg("grid: no ticker")
+	// Watch for downtrends before buying. Hold off until the window has warmed up (so the
+	// first buy after startup isn't made blind), then skip while price is falling.
+	if !s.trendReady(symbol) {
+		s.logger.Debug().Str("symbol", symbol).Msg("grid: warming up trend window")
 		return nil
 	}
-
-	// Record the price sample and hold off buying if the short-term trend is falling.
-	s.recordPrice(symbol, ticker.Last)
-	if drop, ok := s.shortDowntrend(symbol, ticker.Last); ok {
+	if drop, falling := s.shortDowntrend(symbol, ticker.Last); falling {
 		s.logger.Info().Str("symbol", symbol).Float64("drop_pct", drop*100).Msg("grid: holding off, short downtrend")
 		return nil
 	}
@@ -113,7 +120,7 @@ func (s *GridStrategy) Evaluate(state *types.MarketState) *types.Decision {
 
 // recordPrice appends a timestamped price and prunes samples older than the trend window.
 func (s *GridStrategy) recordPrice(symbol string, price float64) {
-	cutoff := time.Now().Add(-trendLookback - time.Minute)
+	cutoff := time.Now().Add(-trendLookback)
 	pts := append(s.priceHist[symbol], pricePoint{t: time.Now(), price: price})
 	i := 0
 	for i < len(pts) && pts[i].t.Before(cutoff) {
@@ -122,16 +129,22 @@ func (s *GridStrategy) recordPrice(symbol string, price float64) {
 	s.priceHist[symbol] = pts[i:]
 }
 
+// trendReady reports whether the price window spans at least trendWarmup, so the grid never
+// makes its first buy blind (with no trend context) right after startup.
+func (s *GridStrategy) trendReady(symbol string) bool {
+	pts := s.priceHist[symbol]
+	return len(pts) >= 2 && time.Since(pts[0].t) >= trendWarmup
+}
+
 // shortDowntrend reports whether price has fallen more than trendDropThreshold versus the
-// oldest retained sample (~one lookback ago). Returns false until enough history exists so
-// it never blocks right after startup or a restart.
+// oldest retained sample (~one lookback ago).
 func (s *GridStrategy) shortDowntrend(symbol string, price float64) (float64, bool) {
 	pts := s.priceHist[symbol]
 	if len(pts) < 2 {
 		return 0, false
 	}
 	oldest := pts[0]
-	if oldest.price <= 0 || time.Since(oldest.t) < trendLookback/2 {
+	if oldest.price <= 0 {
 		return 0, false
 	}
 	change := (price - oldest.price) / oldest.price

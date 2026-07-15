@@ -144,3 +144,20 @@ _(Appended as notable exits / crash guard / daily lock fire or the bot restarts.
 
 - 2026-07-15 09:31 — Restarted on grid-re-arm build (fresh DB, $1000; machine had rebooted
   overnight). First grid leg: 0.000771 BTC @ $64,819.99. Single buy confirmed.
+- 2026-07-15 09:45 — Now running under **systemd** (`trading-bot.service`, enabled + linger),
+  on the downtrend-warmup build. Engine started 09:43, first grid buy 09:45 — the ~90s
+  warmup delay confirmed (no blind startup buy), single leg @ $64,692.51.
+
+### 2026-07-15 — Auto-start on boot + no blind startup buy
+
+- **Auto-start:** enabled the existing `~/.config/systemd/user/trading-bot.service`
+  (Type=simple → launcher.sh, linger already on). The bot now starts whenever WSL starts.
+  Caveat: WSL only starts when Windows launches it (a terminal opens, or a Task Scheduler
+  task running `wsl.exe` at logon) — it does not run while WSL is fully shut down.
+- **No blind startup buy (fixes user report "bought immediately on a downtrend"):** the grid
+  used to buy on the first tick because its downtrend gate returned "not falling" until it
+  had history. Now it (a) records a price sample on *every* tick regardless of position/timing
+  state, so the window stays fresh across long holds, and (b) refuses to buy until the window
+  has warmed up (`trendWarmup` 90s), then skips while price is falling >0.15% over the window
+  (`trendLookback` 5m, `trendDropThreshold` 0.15%). Verified: first buy came ~90s after start,
+  not instantly.
